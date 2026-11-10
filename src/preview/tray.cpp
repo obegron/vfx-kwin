@@ -47,7 +47,7 @@ public:
         emptyWindows = windowMenu->addAction("No application windows"); emptyWindows->setEnabled(false);
         QObject::connect(windowMenu, &QMenu::aboutToShow, this, [this] { refresh(); });
         menu.addAction("Disable all windows", [this] {
-            QDBusInterface control("org.kde.KWin", "/WindowEnhancement", "org.kde.KWin.WindowEnhancement", bus);
+            QDBusInterface control("org.kde.KWin", "/WindowEnhancement", "io.github.obegron.vfxkwin.WindowEnhancement", bus);
             control.call("disableAllWindows"); refresh();
         });
         enable = menu.addAction("Resume checked windows", [this] { setStrength(lastNonzero); });
@@ -160,7 +160,7 @@ public:
             effect.call("unloadEffect", "kwin_vfx"); refresh();
         });
         menu.addAction("Disable all and quit tray", [this] {
-            QDBusInterface control("org.kde.KWin", "/WindowEnhancement", "org.kde.KWin.WindowEnhancement", bus);
+            QDBusInterface control("org.kde.KWin", "/WindowEnhancement", "io.github.obegron.vfxkwin.WindowEnhancement", bus);
             control.call("disableAllWindows"); qApp->quit();
         });
         tray.setContextMenu(&menu);
@@ -343,7 +343,7 @@ private:
     }
     void refreshWindows()
     {
-        QDBusInterface control("org.kde.KWin", "/WindowEnhancement", "org.kde.KWin.WindowEnhancement", bus);
+        QDBusInterface control("org.kde.KWin", "/WindowEnhancement", "io.github.obegron.vfxkwin.WindowEnhancement", bus);
         control.setTimeout(1500);
         QDBusReply<QString> reply = control.call("windowList");
         if (!reply.isValid()) throw std::runtime_error(reply.error().message().toStdString());
@@ -361,7 +361,7 @@ private:
                 action = windowMenu->addAction(QString()); action->setCheckable(true); windows.insert(id, action);
                 QObject::connect(action, &QAction::triggered, this, [this, id](bool enabled) {
                     try {
-                    QDBusInterface control("org.kde.KWin", "/WindowEnhancement", "org.kde.KWin.WindowEnhancement", bus);
+                    QDBusInterface control("org.kde.KWin", "/WindowEnhancement", "io.github.obegron.vfxkwin.WindowEnhancement", bus);
                     QDBusReply<bool> reply = control.call("setWindowEnabled", id, enabled);
                     if (!reply.isValid() || !reply.value())
                         tray.showMessage("Could not select window", "The window closed or cannot be enhanced.", QSystemTrayIcon::Warning);
@@ -407,7 +407,7 @@ int main(int argc, char **argv)
         QString configuration;
         if (desktop) {
             app.setApplicationName("VFX for KWin");
-            if (!bus.registerService("org.kde.WindowEnhancementTray")) throw std::runtime_error("Window Enhancement tray is already running");
+            if (!bus.registerService("io.github.obegron.vfxkwin.Tray")) throw std::runtime_error("Window Enhancement tray is already running");
             configuration = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/kwinrc";
         } else {
             const QFileInfo fileInfo(parser.value("preview-session"));

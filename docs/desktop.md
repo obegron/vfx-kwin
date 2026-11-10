@@ -83,7 +83,7 @@ cleanup; explicit effect unloading waits for workers to stop safely.
 ## D-Bus interface
 
 The effect exports `/WindowEnhancement` on the session service `org.kde.KWin`,
-interface `org.kde.KWin.WindowEnhancement`:
+interface `io.github.obegron.vfxkwin.WindowEnhancement`:
 
 | Method | Behavior |
 | --- | --- |

@@ -22,7 +22,7 @@ class GLTexture;
 class WindowEnhancementEffect : public Effect
 {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.kde.KWin.WindowEnhancement")
+    Q_CLASSINFO("D-Bus Interface", "io.github.obegron.vfxkwin.WindowEnhancement")
 public:
     WindowEnhancementEffect();
     ~WindowEnhancementEffect() override;

@@ -39,7 +39,7 @@ with (artifacts / "brave.log").open("w") as log:
     ], stdout=log, stderr=log, start_new_session=True)
     try:
         control = dbus.Interface(bus.get_object("org.kde.KWin", "/WindowEnhancement"),
-                                 "org.kde.KWin.WindowEnhancement")
+                                 "io.github.obegron.vfxkwin.WindowEnhancement")
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             windows = json.loads(control.windowList())

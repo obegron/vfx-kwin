@@ -14,7 +14,7 @@ from nested_support import artifacts, bus, effects, script, screenshot, configur
 
 
 def control():
-    return dbus.Interface(bus.get_object("org.kde.KWin", "/WindowEnhancement"), "org.kde.KWin.WindowEnhancement")
+    return dbus.Interface(bus.get_object("org.kde.KWin", "/WindowEnhancement"), "io.github.obegron.vfxkwin.WindowEnhancement")
 
 
 def windows():

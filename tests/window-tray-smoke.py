@@ -46,7 +46,7 @@ try:
         time.sleep(.1)
     assert found is not None,"Tray did not register"
     menu=found
-    control=dbus.Interface(bus.get_object("org.kde.KWin","/WindowEnhancement"),"org.kde.KWin.WindowEnhancement")
+    control=dbus.Interface(bus.get_object("org.kde.KWin","/WindowEnhancement"),"io.github.obegron.vfxkwin.WindowEnhancement")
     def state():return json.loads(effects.debug("kwin_vfx","",signature="ss"))
     def nodes():
         _,root=menu.GetLayout(0,-1,["label","enabled","toggle-state"],signature="iias")
