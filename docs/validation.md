@@ -29,6 +29,8 @@ scripts/run-nested.sh python tests/cas-smoke.py
 scripts/run-nested.sh python tests/compression-smoke.py
 scripts/run-nested.sh python tests/grain-smoke.py
 scripts/run-nested.sh python tests/process-cache-smoke.py
+# NVIDIA build: TrueHDR look tunables apply live without a worker restart.
+scripts/try-nvidia.sh python3 tests/truehdr-look-smoke.py
 scripts/run-nested.sh python tests/window-control-smoke.py
 ```
 

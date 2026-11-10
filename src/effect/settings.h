@@ -19,6 +19,11 @@ struct Settings
     bool trueHdrSdr = false; // TrueHDR look tone-mapped for SDR displays.
     unsigned hdrPeakNits = 650;
     unsigned nvidiaMode = 8; // Same-size SDK modes: 8-11 denoise, 12-15 deblur.
+    // TrueHDR look, applied live by the worker (SDK ranges).
+    unsigned hdrContrast = 100; // [0, 200]
+    unsigned hdrSaturation = 100; // [0, 200]
+    unsigned hdrMiddleGray = 50; // [10, 100], overall brightness
+    bool hdrDebanding = true; // Learned debanding; off is faster.
 
     // Invalid or missing entries fall back to defaults; an invalid NvidiaMode
     // keeps previous.nvidiaMode. TrueHDR options require the NVIDIA runtime.

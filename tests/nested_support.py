@@ -18,7 +18,7 @@ effects = dbus.Interface(bus.get_object("org.kde.KWin", "/Effects"), "org.kde.kw
 scripting = dbus.Interface(bus.get_object("org.kde.KWin", "/Scripting"), "org.kde.kwin.Scripting")
 
 
-def configure(strength=0.6, denoise=0.5, sharpen=0.35, nvidia_mode=None, nvidia_sharpen=None, film_grain=None, cas_only=None, cas_strength=None, true_hdr=None, hdr_peak=None, true_hdr_sdr=None, compression_cleanup=None):
+def configure(strength=0.6, denoise=0.5, sharpen=0.35, nvidia_mode=None, nvidia_sharpen=None, film_grain=None, cas_only=None, cas_strength=None, true_hdr=None, hdr_peak=None, true_hdr_sdr=None, compression_cleanup=None, extra=None):
     path = Path(os.environ["XDG_CONFIG_HOME"]) / "kwinrc"
     config = configparser.ConfigParser()
     config.optionxform = str
@@ -42,6 +42,8 @@ def configure(strength=0.6, denoise=0.5, sharpen=0.35, nvidia_mode=None, nvidia_
         config["Effect-kwin_vfx"]["HdrPeakNits"] = str(hdr_peak)
     if true_hdr_sdr is not None:
         config["Effect-kwin_vfx"]["TrueHdrSdr"] = str(bool(true_hdr_sdr)).lower()
+    for key, value in (extra or {}).items():
+        config["Effect-kwin_vfx"][key] = str(value).lower() if isinstance(value, bool) else str(value)
     with path.open("w") as file:
         config.write(file, space_around_delimiters=False)
     effects.reconfigureEffect("kwin_vfx")

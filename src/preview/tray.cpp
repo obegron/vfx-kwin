@@ -70,6 +70,28 @@ public:
             effect.call("reconfigureEffect", "kwin_vfx");
             QTimer::singleShot(100, this, [this] { refresh(); });
         });
+        hdrLook = menu.addMenu("TrueHDR look adjustments");
+        hdrLook->setToolTip("Applies to TrueHDR output and the TrueHDR SDR look. Changes apply live.");
+        const auto addPresets = [this](const char *title, const char *key,
+                                    std::initializer_list<std::pair<const char *, int>> presets, QList<QAction *> &actions) {
+            auto *submenu = hdrLook->addMenu(QString::fromUtf8(title));
+            auto *presetGroup = new QActionGroup(this);
+            for (const auto &[label, value] : presets) {
+                auto *action = submenu->addAction(QString::fromUtf8(label));
+                action->setCheckable(true); action->setData(value); presetGroup->addAction(action);
+                QObject::connect(action, &QAction::triggered, this, [this, key, value] { writeSetting(key, value); });
+                actions.append(action);
+            }
+        };
+        addPresets("Contrast", "HdrContrast", {{"Low (50)", 50}, {"Reduced (75)", 75}, {"Default (100)", 100},
+            {"Increased (125)", 125}, {"High (150)", 150}}, hdrContrasts);
+        addPresets("Saturation", "HdrSaturation", {{"Low (50)", 50}, {"Reduced (75)", 75}, {"Default (100)", 100},
+            {"Increased (125)", 125}, {"High (150)", 150}}, hdrSaturations);
+        addPresets("Brightness (middle gray)", "HdrMiddleGray", {{"Darker (30)", 30}, {"Slightly darker (40)", 40},
+            {"Default (50)", 50}, {"Slightly brighter (60)", 60}, {"Brighter (70)", 70}}, hdrMiddleGrays);
+        hdrDebanding = hdrLook->addAction("Learned debanding (slower)");
+        hdrDebanding->setCheckable(true);
+        QObject::connect(hdrDebanding, &QAction::triggered, this, [this](bool enabled) { writeSetting("HdrDebanding", enabled); });
         auto *modeMenu = menu.addMenu("Enhancement mode");
         auto *modeGroup = new QActionGroup(this);
         for (const auto &[label, mode] : std::array<std::pair<const char *, int>, 3>{{
@@ -167,6 +189,9 @@ private:
     bool menuOpen = false;
     QAction *header = nullptr, *enable = nullptr, *disable = nullptr;
     QAction *hdr = nullptr;
+    QMenu *hdrLook = nullptr;
+    QAction *hdrDebanding = nullptr;
+    QList<QAction *> hdrContrasts, hdrSaturations, hdrMiddleGrays;
     QAction *sdrHdr = nullptr;
     QList<QAction *> strengths;
     QList<QAction *> modes;
@@ -220,6 +245,11 @@ private:
                 ? "TrueHDR — enable HDR in Display Configuration" : "TrueHDR — unavailable on this screen");
             sdrHdr->setChecked(current["true_hdr_sdr"].toBool());
             sdrHdr->setEnabled(current["nvidia_available"].toBool());
+            hdrLook->setEnabled(current["nvidia_available"].toBool() && current.contains("hdr_contrast"));
+            for (const auto &[actions, field] : {std::pair{&hdrContrasts, "hdr_contrast"}, std::pair{&hdrSaturations, "hdr_saturation"},
+                     std::pair{&hdrMiddleGrays, "hdr_middle_gray"}})
+                for (auto *action : *actions) action->setChecked(action->data().toInt() == current[field].toInt());
+            hdrDebanding->setChecked(current["hdr_debanding"].toBool(true));
             for (auto *action : grains) {
                 action->setChecked(action->data().toInt() == qRound(current["film_grain"].toDouble() * 100));
                 action->setEnabled(current.contains("film_grain"));
@@ -277,8 +307,17 @@ private:
             display(desktop ? "Effect unloaded / unavailable" : "Preview closed / unavailable", QColor("#666666"), QString::fromUtf8(error.what()));
             load->setEnabled(true); windowMenu->setEnabled(false);
             enable->setEnabled(false); disable->setEnabled(false); hdr->setEnabled(false); sdrHdr->setEnabled(false);
+            hdrLook->setEnabled(false);
             if (!desktop && !closing) { closing = true; QTimer::singleShot(2500, qApp, &QApplication::quit); }
         }
+    }
+    void writeSetting(const char *key, const QVariant &value)
+    {
+        QSettings config(configPath, QSettings::IniFormat);
+        config.setValue(QStringLiteral("Effect-kwin_vfx/") + QString::fromLatin1(key), value); config.sync();
+        QDBusInterface effect("org.kde.KWin", "/Effects", "org.kde.kwin.Effects", bus);
+        effect.call("reconfigureEffect", "kwin_vfx");
+        QTimer::singleShot(100, this, [this] { refresh(); });
     }
     void setStrength(int percent)
     {

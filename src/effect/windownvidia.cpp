@@ -109,6 +109,9 @@ GLTexture *WindowEnhancementEffect::updateNvidia(WindowState &state, std::chrono
         nvidiaFallback(state, error);
         return nullptr;
     }
+    // Cheap atomic store; the worker applies it before its next TrueHDR run.
+    if (state.hdrEnabled)
+        state.nvidia->setHdrTunables({m_settings.hdrContrast, m_settings.hdrSaturation, m_settings.hdrMiddleGray, m_settings.hdrDebanding});
     state.nvidia->observe(state.revision);
     GLTexture *output = state.nvidia->result();
     if (!output) return nullptr;

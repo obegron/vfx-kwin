@@ -23,6 +23,13 @@ Settings Settings::read(const KConfigGroup &config, bool nvidiaAvailable, const 
     result.trueHdrRequested = nvidiaAvailable && config.readEntry("TrueHdr", false);
     result.trueHdrSdr = nvidiaAvailable && config.readEntry("TrueHdrSdr", false);
     result.hdrPeakNits = std::clamp(config.readEntry("HdrPeakNits", 650u), 400u, 2000u);
+    const auto range = [&config](const char *key, int fallback, int low, int high) {
+        return unsigned(std::clamp(config.readEntry(key, fallback), low, high));
+    };
+    result.hdrContrast = range("HdrContrast", 100, 0, 200);
+    result.hdrSaturation = range("HdrSaturation", 100, 0, 200);
+    result.hdrMiddleGray = range("HdrMiddleGray", 50, 10, 100);
+    result.hdrDebanding = config.readEntry("HdrDebanding", true);
     const int mode = config.readEntry("NvidiaMode", int(previous.nvidiaMode));
     result.nvidiaMode = mode >= 8 && mode <= 15 ? unsigned(mode) : previous.nvidiaMode;
     return result;

@@ -73,6 +73,16 @@ struct Resources {
         }
     }
 };
+
+uint32_t applyHdrTunables(Resources &r, uint32_t packed)
+{
+    const auto tunables = HdrTunables::unpack(packed);
+    for (const auto &[name, value] : std::array<std::pair<const char *, unsigned>, 4>{{
+             {"Contrast", tunables.contrast}, {"Saturation", tunables.saturation},
+             {"MiddleGray", tunables.middleGray}, {"DebandingOff", tunables.debanding ? 0u : 1u}}})
+        r.sdk.check(r.sdk.setU32(r.hdrEffect, name, value), "set TrueHDR parameter");
+    return packed;
+}
 }
 
 Worker::Worker(QString root, QSize size, GLuint input, GLuint output, unsigned mode, float strength,
@@ -204,14 +214,14 @@ void Worker::run()
             r.sdk.check(r.sdk.setF32(r.effect, "Strength", m_strength), "set worker strength");
             r.sdk.check(r.sdk.load(r.effect), "load worker restoration");
         }
+        uint32_t appliedTunables = 0;
         if (m_trueHdr) {
             r.sdk.check(r.sdk.create("TrueHDR", &r.hdrEffect), "create TrueHDR");
             r.sdk.check(r.sdk.setImage(r.hdrEffect, "SrcImage0", m_restoration ? r.middle : r.src), "set TrueHDR source");
             r.sdk.check(r.sdk.setImage(r.hdrEffect, "DstImage0", r.dst), "set TrueHDR destination");
             r.sdk.check(r.sdk.setStream(r.hdrEffect, "CudaStream", r.stream), "set TrueHDR stream");
-            for (const auto &[name, value] : std::array<std::pair<const char *, unsigned>, 5>{{
-                     {"Contrast", 100}, {"Saturation", 100}, {"MiddleGray", 50}, {"Luminance", m_peakNits}, {"DebandingOff", 0}}})
-                r.sdk.check(r.sdk.setU32(r.hdrEffect, name, value), "set TrueHDR parameter");
+            r.sdk.check(r.sdk.setU32(r.hdrEffect, "Luminance", m_peakNits), "set TrueHDR peak");
+            appliedTunables = applyHdrTunables(r, m_hdrTunables.load(std::memory_order_relaxed));
             r.sdk.check(r.sdk.load(r.hdrEffect), "load TrueHDR");
         }
         if (!m_stop.load()) { m_state.store(State::Idle, std::memory_order_release); notify(); }
@@ -249,7 +259,12 @@ void Worker::run()
             if (m_gpuTiming) check(cuEventRecord(r.sdkBegin, r.stream), "record SDK GPU begin");
             const auto sdkStarted = Clock::now();
             if (r.effect) r.sdk.check(r.sdk.run(r.effect, 0), "run worker restoration");
-            if (r.hdrEffect) r.sdk.check(r.sdk.run(r.hdrEffect, 0), "run TrueHDR");
+            if (r.hdrEffect) {
+                // The SDK re-reads tunables per run, so a look change needs no reload.
+                if (const uint32_t tunables = m_hdrTunables.load(std::memory_order_relaxed); tunables != appliedTunables)
+                    appliedTunables = applyHdrTunables(r, tunables);
+                r.sdk.check(r.sdk.run(r.hdrEffect, 0), "run TrueHDR");
+            }
             const double sdkCpuMs = ms(sdkStarted);
             if (m_gpuTiming) check(cuEventRecord(r.sdkEnd, r.stream), "record SDK GPU end");
             if (m_trueHdr) r.sdk.check(r.sdk.imageTransfer(r.dst, r.displayImage, 1.0f, r.stream, nullptr), "convert packed HDR to RGBA16F");

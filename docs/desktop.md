@@ -46,6 +46,16 @@ SDR outputs skip that stage unless the SDR-look option is also enabled.
 output to SDR. This changes contrast/color on SDR screens; it does not add HDR
 display capability. Both options require the NVIDIA runtime/backend.
 
+**TrueHDR look adjustments** tune NVIDIA's conversion for both options and apply
+live, without restarting the AI worker:
+
+- **Contrast** and **Saturation**: 100 is NVIDIA's default (`HdrContrast`,
+  `HdrSaturation`, range 0–200).
+- **Brightness (middle gray)**: higher is brighter; 50 is the default
+  (`HdrMiddleGray`, range 10–100).
+- **Learned debanding** smooths banding in gradients. Turning it off saves GPU
+  time on clean content (`HdrDebanding`).
+
 A window's main output selects the pipeline. Native HDR source windows bypass
 SDR enhancement. SDR windows can use CAS, denoise and deblur on an HDR display
 with TrueHDR switched off; the final shader converts into the display encoding.

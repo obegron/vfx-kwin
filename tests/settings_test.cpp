@@ -45,6 +45,15 @@ int main()
         read = Settings::read(group, true, Settings{});
         require(read.trueHdrRequested && read.trueHdrSdr, "TrueHDR options ignored with NVIDIA runtime");
 
+        group.writeEntry("HdrContrast", 500);
+        group.writeEntry("HdrSaturation", -20);
+        group.writeEntry("HdrMiddleGray", 2);
+        group.writeEntry("HdrDebanding", false);
+        read = Settings::read(group, true, Settings{});
+        require(read.hdrContrast == 200 && read.hdrSaturation == 0 && read.hdrMiddleGray == 10,
+            "TrueHDR tunables not clamped to SDK ranges");
+        require(!read.hdrDebanding, "HdrDebanding not read");
+
         group.writeEntry("CasStrength", 0.7);
         group.writeEntry("NvidiaMode", 3);
         Settings previous;

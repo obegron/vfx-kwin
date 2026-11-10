@@ -200,8 +200,12 @@ void WindowEnhancementEffect::reconfigure(ReconfigureFlags)
     // Filter, grain and AI-blend settings are applied at draw time (the filter
     // cache keys on them). Only inputs baked into a capture need a recapture:
     // compression cleanup, and CAS when it pre-sharpens the TrueHDR input.
+    // TrueHDR look changes apply without reloading the model, but static
+    // content needs a new revision to be submitted again.
+    const bool hdrLookChanged = old.hdrContrast != m_settings.hdrContrast || old.hdrSaturation != m_settings.hdrSaturation
+        || old.hdrMiddleGray != m_settings.hdrMiddleGray || old.hdrDebanding != m_settings.hdrDebanding;
     const bool recapture = old.compressionCleanup * old.strength != m_settings.compressionCleanup * m_settings.strength
-        || (m_trueHdr && old.casStrength != m_settings.casStrength);
+        || (m_trueHdr && (old.casStrength != m_settings.casStrength || hdrLookChanged));
     if (recapture)
         for (auto &[window, state] : m_windows) state->dirty = true;
     if ((m_settings.trueHdrRequested || m_settings.trueHdrSdr) && (!m_hdrColor || m_settings.hdrPeakNits != old.hdrPeakNits))
@@ -245,6 +249,10 @@ QString WindowEnhancementEffect::debug(const QString &parameter) const
             || screen->backendOutput()->capabilities().testFlag(BackendOutput::Capability::HighDynamicRange));
     }));
     result.insert("hdr_peak_nits", int(m_settings.hdrPeakNits));
+    result.insert("hdr_contrast", int(m_settings.hdrContrast));
+    result.insert("hdr_saturation", int(m_settings.hdrSaturation));
+    result.insert("hdr_middle_gray", int(m_settings.hdrMiddleGray));
+    result.insert("hdr_debanding", m_settings.hdrDebanding);
     result.insert("nvidia_available", !m_nvidiaRoot.isEmpty());
     result.insert("control_available", m_controlRegistered);
     result.insert("cas_only", m_settings.casOnly);

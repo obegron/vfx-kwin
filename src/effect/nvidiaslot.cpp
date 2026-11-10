@@ -87,6 +87,7 @@ bool NvidiaSlot::pending() const
     return m_stopping ? !finished() : !m_worker->accessible() && error().isEmpty();
 }
 bool NvidiaSlot::needsSubmission(uint64_t revision) const { return !m_stopping && m_worker->accessible() && revision != m_submitted; }
+void NvidiaSlot::setHdrTunables(const VfxNvidia::HdrTunables &tunables) { m_worker->setHdrTunables(tunables); }
 void NvidiaSlot::stop() { if (!m_stopping) { m_stopping = true; m_worker->requestStop(); } }
 bool NvidiaSlot::finished() const { return m_worker->finished(); }
 

@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <opengl/gltexture.h>
+#include "../backends/nvidia/hdr_tunables.h"
 
 namespace VfxNvidia { class Worker; }
 namespace KWin {
@@ -30,6 +31,7 @@ public:
     bool needsSubmission(uint64_t revision) const;
     bool needsPublish() const;
     void stop();
+    void setHdrTunables(const VfxNvidia::HdrTunables &tunables);
     bool finished() const;
     void submit(GLTexture *source, uint64_t revision, float preCasStrength = 0);
     QJsonObject debug() const;

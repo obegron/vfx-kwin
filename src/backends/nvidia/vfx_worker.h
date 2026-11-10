@@ -4,6 +4,7 @@
 #include <QString>
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
+#include "hdr_tunables.h"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -31,6 +32,8 @@ public:
     // Main-thread only, after accessible(). Transfers ownership of fence.
     void submit(GLsync fence, uint64_t sequence, unsigned outputIndex = 0);
     void requestStop();
+    // Any thread. Applied before the next TrueHDR run; no reload.
+    void setHdrTunables(const HdrTunables &tunables) { m_hdrTunables.store(tunables.pack(), std::memory_order_relaxed); }
     bool finished() const { return m_finished.load(std::memory_order_acquire); }
     // Read only after acquiring Ready/Failed respectively, before submit().
     Timing timing() const { return m_timing; }
@@ -58,6 +61,7 @@ private:
     EGLint m_major = 3, m_minor = 2;
     bool m_robust = false, m_loseOnReset = false, m_resetOnPurge = false;
     std::atomic<State> m_state{State::Starting};
+    std::atomic<uint32_t> m_hdrTunables{HdrTunables{}.pack()};
     std::atomic_bool m_stop{false}, m_finished{false};
     GLsync m_fence = nullptr;
     uint64_t m_sequence = 0;
