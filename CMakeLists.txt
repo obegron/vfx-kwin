@@ -53,7 +53,7 @@ if(KWIN_VFX_BUILD_EFFECT OR KWIN_VFX_CHECK_HEADERS OR KWIN_VFX_BUILD_SMOKE_CLIEN
     find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Quick DBus)
     find_package(KWin 6.8.1...<6.9 REQUIRED)
     file(WRITE "${CMAKE_BINARY_DIR}/kwin-vfx-kwin-version" "${KWin_VERSION}\n")
-    message(STATUS "Building KWin VFX for KWin ${KWin_VERSION}; rebuild after KWin updates")
+    message(STATUS "Building VFX for KWin against KWin ${KWin_VERSION}; rebuild after KWin updates")
 endif()
 
 if(KWIN_VFX_BUILD_SHADER_TESTS)

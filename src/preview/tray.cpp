@@ -391,7 +391,7 @@ private:
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
-    app.setApplicationName("KWin VFX Preview");
+    app.setApplicationName("VFX for KWin Preview");
     app.setDesktopFileName("kwin-vfx-tray");
     app.setQuitOnLastWindowClosed(false);
     QCommandLineParser parser; parser.addHelpOption();
@@ -406,7 +406,7 @@ int main(int argc, char **argv)
         QDBusConnection bus = QDBusConnection::sessionBus();
         QString configuration;
         if (desktop) {
-            app.setApplicationName("KWin VFX");
+            app.setApplicationName("VFX for KWin");
             if (!bus.registerService("org.kde.WindowEnhancementTray")) throw std::runtime_error("Window Enhancement tray is already running");
             configuration = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/kwinrc";
         } else {

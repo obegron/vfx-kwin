@@ -1,4 +1,4 @@
-# Packaging KWin VFX
+# Packaging VFX for KWin
 
 The native plugin ID is `kwin_vfx`,
 the settings group is `Effect-kwin_vfx`, and commands are `kwin-vfx-tray`,
@@ -145,10 +145,10 @@ fail the CMake version check and leave the previous installation in place;
 update the source for compatibility before retrying the source installer.
 
 Avoid `makepkg -s` or `-i` inside a hook: those options invoke pacman, whose
-outer transaction still holds the database lock. A pacman-installed KWin VFX
+outer transaction still holds the database lock. A pacman-installed VFX for KWin
 package with an exact dependency can also block the KWin upgrade before any
 post-transaction hook runs. The generator therefore requires a user installation
-without either KWin VFX package installed. See the
+without either VFX for KWin package installed. See the
 [hook format](https://man.archlinux.org/man/alpm-hooks.5.en) and
 [makepkg options](https://man.archlinux.org/man/makepkg.8.en).
 

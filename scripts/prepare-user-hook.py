@@ -50,7 +50,7 @@ def main():
         if user.pw_uid==0:raise ValueError("Generate the hook as your desktop user, without sudo")
         packages=subprocess.run(["pacman","-Qq","kwin-vfx","kwin-vfx-nvidia"],capture_output=True,text=True)
         if packages.stdout.strip():
-            raise ValueError("A pacman-managed KWin VFX package is installed. Migrate to a user installation first; "
+            raise ValueError("A pacman-managed VFX for KWin package is installed. Migrate to a user installation first; "
                              "its exact KWin dependency would block upgrades before this hook runs.")
         build=args.build_dir.resolve();prefix=args.prefix.resolve();output=args.output_dir.resolve()
         text=hook_text(ROOT,user,prefix,build,[path.resolve() for path in args.cmake_prefix],args.shader_only,

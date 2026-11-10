@@ -1,6 +1,6 @@
 # Desktop controls
 
-Install using the [packaging guide](packaging.md), then open **KWin VFX** from
+Install using the [packaging guide](packaging.md), then open **VFX for KWin** from
 the application launcher or run `kwin-vfx-tray --desktop`.
 
 ## Selecting windows

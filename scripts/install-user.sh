@@ -41,7 +41,7 @@ fi
 install_prefix=$(realpath -m "$install_prefix")
 if [[ -z "$stage_dir" ]] && command -v pacman >/dev/null 2>&1; then
     if pacman -Qq kwin-vfx-nvidia >/dev/null 2>&1 || pacman -Qq kwin-vfx >/dev/null 2>&1; then
-        printf 'A pacman-managed KWin VFX package is installed. Choose either the package or user installation.\n' >&2
+        printf 'A pacman-managed VFX for KWin package is installed. Choose either the package or user installation.\n' >&2
         printf 'Remove that package before using the user installer; see docs/packaging.md. No files were changed.\n' >&2
         exit 1
     fi

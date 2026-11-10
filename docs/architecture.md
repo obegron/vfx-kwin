@@ -1,6 +1,6 @@
 # Architecture
 
-KWin VFX is an in-process OpenGL effect verified against **KWin 6.8.1** and its
+VFX for KWin is an in-process OpenGL effect verified against **KWin 6.8.1** and its
 matching source and headers. CMake accepts 6.8.1 through the 6.8 series, compiling
 against the installed headers. These are private interfaces without a stable
 third-party ABI. KWin's plugin interface ID includes the full version, so the

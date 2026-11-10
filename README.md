@@ -1,4 +1,6 @@
-# KWin VFX
+# VFX for KWin
+
+An independent project; not affiliated with or endorsed by KDE.
 
 Native per-window visual enhancement for KDE Plasma 6 on Wayland. Apply
 sharpening, denoise, deblur and film grain to application windows, including
@@ -42,7 +44,7 @@ scripts/install-user.sh --download-runtime
 ```
 
 Log out and back in after the first user installation so KWin receives its
-plugin search path, then open **KWin VFX** from the application launcher.
+plugin search path, then open **VFX for KWin** from the application launcher.
 If migrating from `kwin-vsr`, use a fresh login before starting the new tray;
 the old tray controls the old effect. Setup never restarts the compositor. See the
 [packaging guide](docs/packaging.md) for dependencies, runtime licensing,
@@ -50,7 +52,7 @@ configuration and removal.
 
 ## Use
 
-Open **KWin VFX** from the application launcher and check windows under
+Open **VFX for KWin** from the application launcher and check windows under
 **Windows — check to enhance**. Settings apply to every checked window.
 Pause retains the selection; disabling all windows clears it.
 

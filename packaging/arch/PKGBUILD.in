@@ -1,4 +1,4 @@
-# KWin VFX source package. Generated with scripts/prepare-arch-package.py.
+# VFX for KWin source package. Generated with scripts/prepare-arch-package.py.
 pkgname=kwin-vfx@PACKAGE_SUFFIX@
 pkgver=0.0.1
 pkgrel=1

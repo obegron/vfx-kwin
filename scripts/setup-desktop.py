@@ -88,7 +88,7 @@ def write_setting(group,key,value):
 
 def desktop_entry(binary):
     quoted=str(binary).replace("\\","\\\\").replace('"','\\"').replace("`","\\`").replace("$","\\$")
-    return "\n".join(["[Desktop Entry]","Type=Application","Name=KWin VFX",
+    return "\n".join(["[Desktop Entry]","Type=Application","Name=VFX for KWin",
         "Comment=Choose windows to enhance from the system tray",f'Exec="{quoted}" --desktop',
         "Icon=preferences-desktop-display","Terminal=false","StartupNotify=false","X-KWin-VSR-Managed=true",""])
 
@@ -120,7 +120,7 @@ def archive_legacy_entries(home, data):
 def apply_enable(info,plan):
     conflicts=installation_conflicts(info)
     if conflicts:
-        raise ValueError("Both system and user KWin VFX installations are present. Choose one installation method "
+        raise ValueError("Both system and user VFX for KWin installations are present. Choose one installation method "
                          "before enabling it; see docs/packaging.md. Other installation: "+", ".join(conflicts))
     home=config_home();home.mkdir(parents=True,exist_ok=True)
     service=home/"systemd/user/plasma-kwin_wayland.service.d/60-kwin-vfx.conf"
@@ -149,7 +149,7 @@ def apply_enable(info,plan):
         effects,properties=connection()
         loaded=properties.Get("org.kde.kwin.Effects","loadedEffects")
         if "kwin_vsr" in loaded:
-            print("Legacy kwin-vsr is still running. Settings migrated; log out and back in to switch to KWin VFX without interrupting it. "
+            print("Legacy kwin-vsr is still running. Settings migrated; log out and back in to switch to VFX for KWin without interrupting it. "
                   "The old tray controls the legacy effect until then; start the new tray after login.")
         elif "kwin_vfx" in loaded:
             print("Effect already loaded. Use a fresh login for a rebuilt plugin; the running compositor was not restarted.")

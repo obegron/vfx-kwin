@@ -30,7 +30,7 @@ def default_runtime():
 
 
 def require_license_acceptance(accepted):
-    print(f"NVIDIA VFX {VERSION} is proprietary software, licensed separately from KWin VFX.\n"
+    print(f"NVIDIA VFX {VERSION} is proprietary software, licensed separately from VFX for KWin.\n"
           f"NVIDIA Software License Agreement: {TERMS}\n"
           f"Product-specific terms: {PRODUCT_TERMS}\n"
           "The wheel includes the May 2025 agreement and product-specific terms,\n"

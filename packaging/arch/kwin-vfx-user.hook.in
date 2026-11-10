@@ -4,7 +4,7 @@ Type = Package
 Target = kwin
 
 [Action]
-Description = Rebuilding KWin VFX for the configured user (fresh login required)...
+Description = Rebuilding VFX for KWin for the configured user (fresh login required)...
 When = PostTransaction
 Depends = util-linux
 Depends = cmake
