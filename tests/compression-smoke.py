@@ -43,7 +43,7 @@ try:
     cleaned = screenshot("cleanup-max")
     current = state()
     assert current["selected"] == 1 and current["processing"] and not current["processing_error"], current
-    assert current["cleanup_draws"] > 0 and not current["nvidia_jobs"], current
+    assert current["cleanup_draws"] > 0 and not current.get("nvidia_jobs"), current
     assert maximum(baseline, cleaned, target) > 0, "Cleanup did not change dark block boundaries"
     assert maximum(baseline, cleaned, control) == 0, "Unselected window changed"
     assert maximum(baseline, cleaned, solid) <= 1, "Solid fill changed or capture orientation flipped"

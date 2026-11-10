@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "nvidiaslot.h"
+#include "renderpass.h"
 #include "../backends/nvidia/vfx_worker.h"
 #include "../backends/nvidia/frame_limits.h"
 #include <opengl/glutils.h>
@@ -92,26 +93,10 @@ bool NvidiaSlot::finished() const { return m_worker->finished(); }
 void NvidiaSlot::submit(GLTexture *source, uint64_t revision, float preCasStrength)
 {
     if (m_stopping || !m_worker->accessible() || revision == m_submitted) return;
-    GLint binding = 0;
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
-    const bool blend = glIsEnabled(GL_BLEND), scissor = glIsEnabled(GL_SCISSOR_TEST), dither = glIsEnabled(GL_DITHER);
-    GLFramebuffer::pushFramebuffer(m_framebuffer.get());
-    auto restore = qScopeGuard([&] {
-        GLFramebuffer::popFramebuffer();
-        glBindTexture(GL_TEXTURE_2D, binding);
-        if (blend) glEnable(GL_BLEND);
-        if (scissor) glEnable(GL_SCISSOR_TEST);
-        if (dither) glEnable(GL_DITHER);
+    renderPass(m_copyShader.get(), source, nullptr, m_framebuffer.get(), m_size, [&](GLShader *shader) {
+        shader->setUniform("preCasStrength", preCasStrength);
+        shader->setUniform("texelSize", QVector2D(1.0f / source->width(), 1.0f / source->height()));
     });
-    glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST); glDisable(GL_DITHER);
-    ShaderBinder binder(m_copyShader.get());
-    QMatrix4x4 projection;
-    projection.ortho(0, m_size.width(), m_size.height(), 0, -1, 1);
-    m_copyShader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, projection);
-    m_copyShader->setUniform(GLShader::IntUniform::Sampler, 0);
-    m_copyShader->setUniform("preCasStrength", preCasStrength);
-    m_copyShader->setUniform("texelSize", QVector2D(1.0f / source->width(), 1.0f / source->height()));
-    source->bind(); source->render(m_size); source->unbind();
     GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     if (!fence) throw std::runtime_error("NVIDIA input fence failed");
     glFlush();

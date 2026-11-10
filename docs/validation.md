@@ -23,6 +23,7 @@ cmake -S . -B build -DKWIN_VFX_BUILD_SMOKE_CLIENT=ON -DKWIN_VFX_BUILD_SHADER_TES
 cmake --build build
 python3 tests/packaging_test.py
 build/kwin_vfx_profile_reset_test
+build/kwin_vfx_settings_test
 scripts/run-nested.sh python tests/enhancement-smoke.py
 scripts/run-nested.sh python tests/cas-smoke.py
 scripts/run-nested.sh python tests/compression-smoke.py

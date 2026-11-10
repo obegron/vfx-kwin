@@ -5,7 +5,7 @@ if(NOT KDE_INSTALL_PLUGINDIR)
     set(KDE_INSTALL_PLUGINDIR "${CMAKE_INSTALL_LIBDIR}/qt6/plugins" CACHE PATH "Qt plugin installation directory" FORCE)
 endif()
 kcoreaddons_add_plugin(kwin_vfx
-    SOURCES windoweffect.cpp windoweffect.h main.cpp renderprofile.cpp renderprofile.h shaders.qrc ../backends/shader/filter.qrc
+    SOURCES windoweffect.cpp windoweffect.h windowrender.cpp windownvidia.cpp windowstate.h settings.cpp settings.h hdr.cpp hdr.h renderpass.h logging.h main.cpp renderprofile.cpp renderprofile.h shaders.qrc ../backends/shader/filter.qrc
     INSTALL_NAMESPACE "kwin/effects/plugins")
 target_compile_features(kwin_vfx PRIVATE cxx_std_23)
 set_target_properties(kwin_vfx PROPERTIES PREFIX "")

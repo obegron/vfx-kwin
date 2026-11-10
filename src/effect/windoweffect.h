@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "settings.h"
 #include <effect/effect.h>
 #include <atomic>
 #include <chrono>
@@ -58,6 +59,11 @@ private:
     bool cleanupCapture(WindowState &state);
     bool filterActive(int mode) const;
     bool process(WindowState &state, int mode, GLTexture *aiOutput);
+    // NVIDIA scheduling (windownvidia.cpp).
+    bool usesNvidia(const WindowState &state) const;
+    GLTexture *updateNvidia(WindowState &state, std::chrono::steady_clock::time_point now);
+    void submitNvidia(WindowState &state, std::chrono::steady_clock::time_point now);
+    void nvidiaFallback(WindowState &state, const QString &error);
     void nvidiaProgress();
     void scheduleAiWake(std::chrono::steady_clock::duration delay);
     bool paint(WindowState &state, const RenderTarget &target, const RenderViewport &viewport,
@@ -81,26 +87,16 @@ private:
     uint64_t m_nvidiaFallbacks = 0;
     const QByteArray m_testFailure;
     const bool m_testTint;
-    float m_strength = 0.6f;
-    float m_denoise = 0.5f;
-    float m_sharpen = 0.35f;
-    float m_compressionCleanup = 0;
     uint64_t m_cleanupDraws = 0;
     bool m_shaderFailed = false;
     bool m_controlRegistered = false;
     QString m_nvidiaRoot;
     QString m_nvidiaError;
     QString m_processingError;
-    unsigned m_nvidiaMode = 8;
-    float m_nvidiaSharpen = 0;
-    bool m_casOnly = false;
+    Settings m_settings;
     bool m_trueHdr = false;
-    bool m_trueHdrRequested = false;
-    bool m_trueHdrSdr = false;
-    unsigned m_hdrPeakNits = 650;
     bool m_hdrOutputSeen = false;
     std::shared_ptr<ColorDescription> m_lastTargetColor;
-    float m_grain = 0;
     int m_grainFrame = 0;
     QTimer m_grainTimer;
     uint64_t m_nvidiaDraws = 0;
