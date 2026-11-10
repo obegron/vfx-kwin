@@ -4,7 +4,7 @@ pkgver=0.0.1
 pkgrel=1
 pkgdesc='Per-window CAS, film grain and optional NVIDIA restoration for KWin Wayland'
 arch=('x86_64')
-url='https://github.com/obegron/kwin-vfx'
+url='https://github.com/obegron/vfx-kwin'
 license=('GPL-2.0-or-later' 'MIT')
 depends=('glibc' 'gcc-libs' 'kwin>=6.8.1' 'kwin<6.9' 'qt6-base>=6.11.0' 'qt6-declarative'
          'kconfig' 'kcoreaddons' 'kglobalaccel>=6.30' 'kwindowsystem' 'kdecoration'

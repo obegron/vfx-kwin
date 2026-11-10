@@ -3,7 +3,7 @@
 The native plugin ID is `kwin_vfx`,
 the settings group is `Effect-kwin_vfx`, and commands are `kwin-vfx-tray`,
 `kwin-vfx-setup` and `kwin-vfx-runtime`. The repository is
-[obegron/kwin-vfx](https://github.com/obegron/kwin-vfx).
+[obegron/vfx-kwin](https://github.com/obegron/vfx-kwin).
 
 The plugin and tray are built from our source. NVIDIA's runtime stays separate:
 the runtime helper obtains a pinned official wheel directly from NVIDIA or uses
