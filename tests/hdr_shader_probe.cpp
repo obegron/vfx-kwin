@@ -44,10 +44,6 @@ public:
         surface.setFormat(context.format()); surface.create();
         require(context.makeCurrent(&surface) && initializeOpenGLFunctions(), "GL context activation failed");
         QByteArray fragment = resource(sdrShader ? ":/kwin-vfx/enhance.frag" : ":/kwin-vfx/enhance-hdr.frag");
-        if (sdrShader) {
-            fragment.replace("#include \"kwin-vfx/filter.glsl\"",resource(":/opengl/kwin-vfx/filter.glsl"));
-            fragment.replace("#include \"kwin-vfx/cas.glsl\"",resource(":/opengl/kwin-vfx/cas.glsl"));
-        }
         // Qt's shader wrapper detects #version only at the start (KWin's own
         // loader handles the preceding SPDX comment itself).
         fragment = fragment.mid(fragment.indexOf("#version"));
@@ -99,10 +95,6 @@ void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); texcoord0 
         program.setUniformValue("originalToDestination", ColorDescription::sRGB->toOther(*hdr, RenderingIntent::Perceptual));
         const auto tf = ColorDescription::sRGB->transferFunction();
         program.setUniformValue("originalTransferParams", QVector2D(tf.minLuminance, tf.maxLuminance-tf.minLuminance));
-        if (sdrShader) {
-            program.setUniformValue("aiTexelSize",QVector2D(1,1));
-            program.setUniformValue("aiSharpenStrength",1.0f);
-        }
     }
     ~Probe() { context.makeCurrent(&surface); glDeleteFramebuffers(1,&fbo); glDeleteTextures(3,textures); glDeleteVertexArrays(1,&vao); }
     std::array<float,4> render(float alpha, float strength, float nits, float grain=0, int frame=0)
@@ -146,15 +138,27 @@ int main(int argc,char **argv)
         require(a[0]!=b[0] && a[3]==b[3],"HDR grain did not animate or changed alpha");
         require(p.render(1,1,200)==p.render(1,1,200),"Grain off is unstable");
         {
+            // Grain is relative to SDR reference white, never the output peak.
+            const auto &tf=p.hdr->transferFunction();
+            const double clean=tf.whiteEncodedToNits(p.render(1,1,200)[0]);
+            double largest=0;
+            for (int frame=0;frame<64;++frame)
+                largest=std::max(largest,std::abs(tf.whiteEncodedToNits(p.render(1,1,200,1,frame)[0])-clean));
+            const double bound=0.08*p.hdr->referenceLuminance()*1.02;
+            if (largest>bound) std::cerr<<"grain delta "<<largest<<" nits exceeds "<<bound<<'\n';
+            require(largest>0 && largest<=bound,"HDR grain amplitude is not bounded by reference white");
+        }
+        {
             Probe sdr(true);
             const auto expectedColor=ColorDescription::sRGB->mapTo(QVector3D(.5f,.5f,.5f),*sdr.hdr,RenderingIntent::Perceptual);
-            for (int mode : {1,2,3}) for (float alpha : {1.0f,0.5f,0.02f,0.0f}) {
-                sdr.program.setUniformValue("filterMode",mode);
+            // Filtering happens in process.frag; the per-repaint SDR draw must
+            // only convert the cached result into the HDR destination.
+            for (float alpha : {1.0f,0.5f,0.02f,0.0f}) {
                 const auto out=sdr.render(alpha,1,200);
                 require(std::abs(out[3]-alpha)<0.00001f,"SDR enhancement on HDR changed alpha");
                 for (int c=0;c<3;++c) {
                     if (std::abs(out[c]-expectedColor[c]*alpha)>=0.0001f)
-                        std::cerr << "mode=" << mode << " alpha=" << alpha << " channel=" << c << " output=" << out[c]
+                        std::cerr << "alpha=" << alpha << " channel=" << c << " output=" << out[c]
                                   << " expected=" << expectedColor[c]*alpha << '\n';
                     require(std::abs(out[c]-expectedColor[c]*alpha)<0.0001f,"SDR enhancement on HDR differs from CPU color reference");
                 }

@@ -6,6 +6,8 @@
 #include <QThread>
 #include <array>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 
 namespace VfxNvidia {
 namespace {
@@ -18,6 +20,11 @@ void check(CUresult status, const char *stage)
     cuGetErrorName(status, &name);
     throw std::runtime_error(std::string(stage) + ": " + name);
 }
+struct Completion {
+    std::mutex mutex;
+    std::condition_variable signal;
+    bool done = false;
+};
 // This object is created, used and destroyed exclusively on the worker thread.
 struct Resources {
     Runtime sdk;
@@ -69,8 +76,8 @@ struct Resources {
 }
 
 Worker::Worker(QString root, QSize size, GLuint input, GLuint output, unsigned mode, float strength,
-    GLuint secondOutput, bool trueHdr, bool restoration, unsigned peakNits)
-    : m_root(std::move(root)), m_size(size), m_input(input), m_output(output), m_secondOutput(secondOutput),
+    GLuint secondOutput, bool trueHdr, bool restoration, unsigned peakNits, std::function<void()> notify)
+    : m_notify(std::move(notify)), m_root(std::move(root)), m_size(size), m_input(input), m_output(output), m_secondOutput(secondOutput),
       m_mode(mode), m_strength(strength), m_trueHdr(trueHdr), m_restoration(restoration), m_peakNits(peakNits)
 {
     m_gpuTiming = qEnvironmentVariableIsSet("KWIN_VFX_PROFILE");
@@ -204,7 +211,7 @@ void Worker::run()
                 r.sdk.check(r.sdk.setU32(r.hdrEffect, name, value), "set TrueHDR parameter");
             r.sdk.check(r.sdk.load(r.hdrEffect), "load TrueHDR");
         }
-        if (!m_stop.load()) m_state.store(State::Idle, std::memory_order_release);
+        if (!m_stop.load()) { m_state.store(State::Idle, std::memory_order_release); notify(); }
         while (!m_stop.load(std::memory_order_acquire)) {
             auto state = m_state.load(std::memory_order_acquire);
             if (state != State::Queued) {
@@ -252,16 +259,27 @@ void Worker::run()
             check(cuGraphicsUnmapResources(2, r.mappedGraphics.data(), r.stream), "unmap worker textures");
             r.mapped = false;
             check(cuEventRecord(r.done, r.stream), "record worker completion");
-            CUresult done;
-            while ((done = cuEventQuery(r.done)) == CUDA_ERROR_NOT_READY) {
-                require(ms(started) < 10000, "Worker CUDA completion timeout");
-                QThread::usleep(100);
+            // Sleep until the stream reaches a host callback instead of polling.
+            // The callback owns one reference so a timed-out wait cannot leave
+            // it signalling freed state.
+            auto completion = std::make_shared<Completion>();
+            auto reference = std::make_unique<std::shared_ptr<Completion>>(completion);
+            check(cuLaunchHostFunc(r.stream, [](void *data) {
+                const std::unique_ptr<std::shared_ptr<Completion>> owner(static_cast<std::shared_ptr<Completion> *>(data));
+                { const std::lock_guard lock((*owner)->mutex); (*owner)->done = true; }
+                (*owner)->signal.notify_all();
+            }, reference.get()), "schedule worker completion");
+            reference.release();
+            {
+                std::unique_lock lock(completion->mutex);
+                require(completion->signal.wait_until(lock, started + std::chrono::seconds(10), [&] { return completion->done; }),
+                    "Worker CUDA completion timeout");
             }
-            check(done, "complete worker stream");
+            check(cuEventQuery(r.done), "complete worker stream");
             float sdkGpuMs = -1;
             if (m_gpuTiming) check(cuEventElapsedTime(&sdkGpuMs, r.sdkBegin, r.sdkEnd), "read completed SDK GPU time");
             m_timing = {sdkCpuMs, ms(started), sdkGpuMs};
-            if (!m_stop.load()) m_state.store(State::Ready, std::memory_order_release);
+            if (!m_stop.load()) { m_state.store(State::Ready, std::memory_order_release); notify(); }
         }
         if (m_fence) { glDeleteSync(m_fence); m_fence = nullptr; }
     } catch (const std::exception &error) {
@@ -271,5 +289,6 @@ void Worker::run()
     // Keep Failed observable until the main thread consumes its diagnostic.
     if (m_state.load() != State::Failed) m_state.store(State::Finished, std::memory_order_release);
     m_finished.store(true, std::memory_order_release);
+    notify(); // Failed and stopped workers both end here.
 }
 } // namespace VfxNvidia

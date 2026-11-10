@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QSize>
 #include <array>
+#include <functional>
 #include <memory>
 #include <opengl/gltexture.h>
 
@@ -14,7 +15,9 @@ class GLShader;
 // Main-thread staging slot for the optional NVIDIA worker backend.
 class NvidiaSlot {
 public:
-    NvidiaSlot(const QString &runtime, QSize size, unsigned mode, bool trueHdr = false, bool restoration = true, unsigned peakNits = 650);
+    // notify is invoked from the worker thread on each state change (see Worker).
+    NvidiaSlot(const QString &runtime, QSize size, unsigned mode, bool trueHdr, bool restoration, unsigned peakNits,
+        std::function<void()> notify);
     ~NvidiaSlot();
     QSize size() const { return m_size; }
     unsigned mode() const { return m_mode; }

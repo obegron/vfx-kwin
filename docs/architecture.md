@@ -48,8 +48,12 @@ buffer lifetimes and acquire/release synchronization; the effect avoids that.
 
 The CUDA-independent backend provides spatial denoise/sharpen, AMD CAS and
 animated monochrome grain. Shaders are shared with independent correctness and
-GPU timing probes. Strength zero permits passthrough without capture work when
-no other processing is needed. Shader/allocation failures drop the selection
+GPU timing probes. Filtering is an offscreen pass into a cached texture, rerun
+only when the capture revision, the published AI result or a filter setting
+changes. Repaints of unchanged content (grain animation, other outputs,
+overlapping windows) draw that texture with grain and color conversion only.
+Strength zero permits passthrough without capture work when no other
+processing is needed. Shader/allocation failures drop the selection
 and restore ordinary rendering where the GL context remains usable.
 
 ## NVIDIA ownership and synchronization
@@ -67,7 +71,10 @@ and CUDA registrations. Only one job is in flight per slot. A GL producer fence
 precedes CUDA mapping; worker completion and consumer fences protect output
 publication and reuse. Two alternating output textures allow GL to sample the
 published result while CUDA writes the other texture. Map/unmap, inference and
-completion waits occur on the worker thread. This avoids CPU frame readback,
+completion waits occur on the worker thread; the worker sleeps on a CUDA host
+callback rather than polling. Each state change the compositor acts on (ready,
+result available, failed, stopped) posts a queued event that schedules a repaint
+of affected windows, so nothing polls while inference runs. This avoids CPU frame readback,
 but still involves GPU copies and format conversions.
 
 A completed result more than one capture revision behind is rejected in favor
@@ -95,8 +102,8 @@ A geometry-less effect-owned scene item advertises generated HDR headroom to
 KWin without relabeling application SDR pixels. Actual HDR output requires an
 active HDR-enabled output. A separate SDR-look option permits KWin to tone map
 the TrueHDR result to SDR. A window's main output chooses its pipeline; each
-draw still receives destination color conversion. Grain can appear stronger
-through the HDR-derived path and may need a lower strength.
+draw still receives destination color conversion. Grain amplitude is scaled to
+the destination's SDR reference white, not its peak, so it matches the SDR path.
 
 ## Limits and validation
 

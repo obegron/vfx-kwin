@@ -45,7 +45,9 @@ void main()
         uint frame = uint(grainFrame);
         float noise = grainRandom(pixel, frame) + grainRandom(pixel, frame + 7919u) - 1.0;
         float luma = clamp(dot(originalStraight, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
-        float amplitude = 0.08 * grainStrength * maxDestinationLuminance * (4.0 * luma * (1.0 - luma));
+        // Scale to SDR reference white, not the output peak: the SDR path
+        // applies grain relative to 1.0 = reference white.
+        float amplitude = 0.08 * grainStrength * destinationReferenceLuminance * (4.0 * luma * (1.0 - luma));
         nits = clamp(nits + vec3(noise * amplitude), vec3(0.0), vec3(maxDestinationLuminance));
     }
     vec4 color = adjustSaturation(vec4(nits * original.a, original.a));

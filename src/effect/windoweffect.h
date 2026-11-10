@@ -2,6 +2,8 @@
 #pragma once
 
 #include <effect/effect.h>
+#include <atomic>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <vector>
@@ -14,6 +16,7 @@ class RenderProfile;
 class Item;
 class NvidiaSlot;
 class ColorDescription;
+class GLTexture;
 
 class WindowEnhancementEffect : public Effect
 {
@@ -53,11 +56,16 @@ private:
     void changeStrength(float delta);
     bool capture(WindowState &state, EffectWindow *window, const RenderViewport &viewport);
     bool cleanupCapture(WindowState &state);
+    bool filterActive(int mode) const;
+    bool process(WindowState &state, int mode, GLTexture *aiOutput);
+    void nvidiaProgress();
+    void scheduleAiWake(std::chrono::steady_clock::duration delay);
     bool paint(WindowState &state, const RenderTarget &target, const RenderViewport &viewport,
         EffectWindow *window, const Region &region, const WindowPaintData &data);
 
     std::unique_ptr<GLShader> m_shader;
     std::unique_ptr<GLShader> m_cleanupShader;
+    std::unique_ptr<GLShader> m_processShader;
     std::unique_ptr<GLShader> m_hdrShader;
     std::shared_ptr<ColorDescription> m_hdrColor;
     std::unique_ptr<RenderProfile> m_profile;
@@ -94,6 +102,9 @@ private:
     int m_grainFrame = 0;
     QTimer m_grainTimer;
     uint64_t m_nvidiaDraws = 0;
-    QTimer *m_nvidiaTimer = nullptr;
+    uint64_t m_processDraws = 0;
+    // Worker state changes arrive as queued events; this coalesces them.
+    std::atomic_bool m_nvidiaEventQueued{false};
+    QTimer m_aiStableTimer;
 };
 }

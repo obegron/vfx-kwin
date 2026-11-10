@@ -1,29 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Per-repaint draw of the cached SDR result (see process.frag): animated grain,
+// destination color management, saturation and modulation only.
 #version 140
 #include "colormanagement.glsl"
 #include "saturation.glsl"
-#include "kwin-vfx/filter.glsl"
-#include "kwin-vfx/cas.glsl"
 
 uniform sampler2D sampler;
 uniform vec4 modulation;
 uniform vec2 texelSize;
-uniform float denoiseStrength;
-uniform float sharpenStrength;
-uniform int filterMode; // 0: spatial shader, 1: original while pending, 2: AI+CAS, 3: CAS only
-uniform sampler2D aiSampler;
-uniform float enhancementStrength;
-uniform float aiSharpenStrength;
-uniform vec2 aiTexelSize;
 uniform float grainStrength;
 uniform int grainFrame;
 in vec2 texcoord0;
 out vec4 fragColor;
-
-vec4 sampleAi()
-{
-    return casSharpen(aiSampler, texcoord0, aiTexelSize, aiSharpenStrength);
-}
 
 float grainRandom(uvec2 pixel, uint seed)
 {
@@ -53,18 +41,7 @@ vec4 addFilmGrain(vec4 color)
 
 void main()
 {
-    vec4 tex = texture(sampler, texcoord0);
-    if (filterMode == 0) {
-        tex = enhanceWindow(sampler, texcoord0, texelSize, denoiseStrength, sharpenStrength);
-    } else if (filterMode == 3) {
-        tex = casSharpen(sampler, texcoord0, texelSize, aiSharpenStrength * enhancementStrength);
-    } else if (filterMode == 2) {
-        vec4 ai = sampleAi();
-        if (ai.a > 0.99) {
-            tex.rgb = mix(tex.rgb, ai.rgb * tex.a, enhancementStrength);
-        }
-    }
-    tex = addFilmGrain(tex);
+    vec4 tex = addFilmGrain(texture(sampler, texcoord0));
     if (tex.a <= 0.0) { fragColor = vec4(0.0); return; }
     // Color transforms can include a black-point offset, and tone mapping is
     // nonlinear. Apply them to straight RGB, then restore premultiplied alpha.

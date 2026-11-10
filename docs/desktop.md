@@ -51,8 +51,8 @@ SDR enhancement. SDR windows can use CAS, denoise and deblur on an HDR display
 with TrueHDR switched off; the final shader converts into the display encoding.
 Mixed-output visual validation remains limited. Filter order
 is optional compression cleanup → CAS → optional Deblur/Denoise → TrueHDR → grain → display encoding.
-Grain covers the entire selected window and may appear stronger through the
-HDR-derived path; adjust its strength to suit the content.
+Grain covers the entire selected window. Its amplitude is relative to SDR
+reference white on both the SDR and TrueHDR paths.
 
 ## Session and configuration
 

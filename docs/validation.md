@@ -27,6 +27,7 @@ scripts/run-nested.sh python tests/enhancement-smoke.py
 scripts/run-nested.sh python tests/cas-smoke.py
 scripts/run-nested.sh python tests/compression-smoke.py
 scripts/run-nested.sh python tests/grain-smoke.py
+scripts/run-nested.sh python tests/process-cache-smoke.py
 scripts/run-nested.sh python tests/window-control-smoke.py
 ```
 

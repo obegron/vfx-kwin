@@ -8,7 +8,8 @@
 #include <stdexcept>
 
 namespace KWin {
-NvidiaSlot::NvidiaSlot(const QString &runtime, QSize size, unsigned mode, bool trueHdr, bool restoration, unsigned peakNits)
+NvidiaSlot::NvidiaSlot(const QString &runtime, QSize size, unsigned mode, bool trueHdr, bool restoration, unsigned peakNits,
+    std::function<void()> notify)
     : m_size(size), m_mode(mode), m_trueHdr(trueHdr), m_restoration(restoration), m_peakNits(peakNits)
 {
     VfxNvidia::validateFrameSize(size);
@@ -50,7 +51,7 @@ NvidiaSlot::NvidiaSlot(const QString &runtime, QSize size, unsigned mode, bool t
     if (!m_copyShader) throw std::runtime_error("NVIDIA input shader failed");
     glFlush();
     m_worker = std::make_unique<VfxNvidia::Worker>(runtime, size, m_names[0], m_names[1], mode, 1.0f,
-        m_names[2], m_trueHdr, m_restoration, m_peakNits);
+        m_names[2], m_trueHdr, m_restoration, m_peakNits, std::move(notify));
     cleanup.dismiss();
 }
 

@@ -92,6 +92,15 @@ struct WindowEnhancementEffect::WindowState
     std::unique_ptr<GLFramebuffer> framebuffer;
     std::unique_ptr<GLTexture> cleanupTexture;
     std::unique_ptr<GLFramebuffer> cleanupFramebuffer;
+    // Cached filter output, redrawn only when its inputs change.
+    std::unique_ptr<GLTexture> processed;
+    std::unique_ptr<GLFramebuffer> processedFramebuffer;
+    struct ProcessKey {
+        uint64_t revision = 0, aiRevision = 0;
+        int mode = -1;
+        float denoise = 0, sharpen = 0, cas = 0, strength = 0;
+        bool operator==(const ProcessKey &) const = default;
+    } processedKey;
     ItemEffect itemEffect;
     std::unique_ptr<HdrHeadroomItem> hdrHeadroom;
     QMetaObject::Connection damageConnection;
@@ -103,7 +112,6 @@ struct WindowEnhancementEffect::WindowState
     bool redirected = false;
     bool captured = false;
     uint64_t revision = 0;
-    uint64_t presentedRevision = 0;
     uint64_t rejectedRevision = 0;
     uint64_t lastRevisionGap = 0;
     bool itemTreeDirty = true;
@@ -145,30 +153,13 @@ WindowEnhancementEffect::WindowEnhancementEffect()
         if (config.readEntry("NvidiaEnabled", false))
             m_nvidiaRoot = config.readPathEntry("NvidiaRuntime", QString());
     }
-    if (!m_nvidiaRoot.isEmpty()) {
-        auto *timer = new ::QTimer(this);
-        timer->setInterval(16);
-        connect(timer, &::QTimer::timeout, this, [this] {
-            if (!processingEnabled() || effects->isScreenLocked()) { m_nvidiaTimer->stop(); return; }
-            bool pending = false;
-            for (auto &[window, state] : m_windows) {
-                if (state->awaitingAi || (state->nvidia && (state->nvidia->pending() || !state->nvidia->error().isEmpty()
-                    || state->nvidia->needsSubmission(state->revision)
-                    || state->nvidia->needsPublish()
-                    || state->nvidia->size() != state->size
-                    || !state->nvidia->matches(state->size, m_nvidiaMode, state->hdrEnabled, !m_casOnly, m_hdrPeakNits)
-                    || (m_casOnly && state->nvidia->finished())
-                    || (state->nvidia->result() && state->presentedRevision != state->nvidia->completedRevision()))))
-                {
-                    window->addRepaintFull();
-                    pending = true;
-                }
-            }
-            if (!pending) m_nvidiaTimer->stop();
-        });
-        m_nvidiaTimer = timer;
-    }
 #endif
+    // Fires once at the earliest resize-stability deadline of a waiting window.
+    m_aiStableTimer.setSingleShot(true);
+    connect(&m_aiStableTimer, &QTimer::timeout, this, [this] {
+        for (auto &[window, state] : m_windows)
+            if (state->awaitingAi) window->addRepaintFull();
+    });
     if (qEnvironmentVariableIsSet("KWIN_VFX_PROFILE")) m_profile = std::make_unique<RenderProfile>();
     auto *action = new QAction(this);
     action->setObjectName(QStringLiteral("ToggleWindowEnhancement"));
@@ -223,6 +214,7 @@ WindowEnhancementEffect::~WindowEnhancementEffect()
 #endif
     m_shader.reset();
     m_cleanupShader.reset();
+    m_processShader.reset();
     m_hdrShader.reset();
     m_profile.reset();
     effects->addRepaintFull();
@@ -266,7 +258,7 @@ void WindowEnhancementEffect::updateHdrAvailability()
 void WindowEnhancementEffect::updateRedirects()
 {
     const bool enabled = processingEnabled();
-    if (!enabled && m_nvidiaTimer) m_nvidiaTimer->stop();
+    if (!enabled) m_aiStableTimer.stop();
     if (enabled && m_grain > 0 && !m_windows.empty() && !effects->isScreenLocked()) m_grainTimer.start();
     else m_grainTimer.stop();
     for (auto &[window, state] : m_windows) {
@@ -380,6 +372,7 @@ QString WindowEnhancementEffect::debug(const QString &parameter) const
     result.insert("processing_error", m_processingError);
     result.insert("compression_cleanup", m_compressionCleanup);
     result.insert("cleanup_draws", double(m_cleanupDraws));
+    result.insert("process_draws", double(m_processDraws));
     if (parameter == QStringLiteral("windows")) {
         QJsonArray windows;
         for (const auto *window : effects->stackingOrder()) {
@@ -460,6 +453,11 @@ bool WindowEnhancementEffect::ensureShader()
             m_shaderFailed = true;
             qCWarning(KWIN_VFX) << "Shader failed; effect remains passthrough until reloaded";
         }
+    }
+    if (!m_testTint && !m_processShader) {
+        m_processShader = ShaderManager::instance()->generateShaderFromFile(
+            ShaderTrait::MapTexture, {}, QStringLiteral(":/kwin-vfx/process.frag"));
+        if (!m_processShader) { m_shaderFailed = true; return false; }
     }
     if (m_trueHdr && !m_hdrShader) {
         m_hdrShader = ShaderManager::instance()->generateShaderFromFile(
@@ -550,8 +548,10 @@ void WindowEnhancementEffect::disableWindow(EffectWindow *window)
     auto state = std::move(m_windows.at(window));
     m_windows.erase(window);
     retireSlot(*state);
-    if (m_windows.empty() && m_nvidiaTimer) m_nvidiaTimer->stop();
-    if (m_windows.empty()) m_grainTimer.stop();
+    if (m_windows.empty()) {
+        m_aiStableTimer.stop();
+        m_grainTimer.stop();
+    }
     if (!effects->makeOpenGLContextCurrent()) {
         // Drop selection and scanout restriction even when the context is lost.
         // Retain only GPU allocations until a current context or destruction.
@@ -638,6 +638,8 @@ bool WindowEnhancementEffect::capture(WindowState &state, EffectWindow *window, 
         return false;
     }
     if (!state.texture || state.size != size || state.scale != scale) {
+        state.processedFramebuffer.reset();
+        state.processed.reset();
         state.cleanupFramebuffer.reset();
         state.cleanupTexture.reset();
         state.framebuffer.reset();
@@ -699,48 +701,125 @@ bool WindowEnhancementEffect::capture(WindowState &state, EffectWindow *window, 
     return true;
 }
 
+// Draws source (and optional secondary on unit 1) through shader into target,
+// restoring every piece of GL state KWin's renderer relies on.
+template<typename Setup>
+static void renderPass(GLShader *shader, GLTexture *source, GLTexture *secondary, GLFramebuffer *target, QSize size, Setup &&setup)
+{
+    const bool blend = glIsEnabled(GL_BLEND), scissor = glIsEnabled(GL_SCISSOR_TEST), dither = glIsEnabled(GL_DITHER);
+    GLint activeTexture = 0, binding = 0, secondaryBinding = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+    glActiveTexture(GL_TEXTURE1);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &secondaryBinding);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
+    GLFramebuffer::pushFramebuffer(target);
+    const auto restore = qScopeGuard([&] {
+        GLFramebuffer::popFramebuffer();
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, secondaryBinding);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, binding);
+        glActiveTexture(activeTexture);
+        if (blend) glEnable(GL_BLEND);
+        if (scissor) glEnable(GL_SCISSOR_TEST);
+        if (dither) glEnable(GL_DITHER);
+    });
+    glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST); glDisable(GL_DITHER);
+    ShaderBinder binder(shader);
+    QMatrix4x4 projection;
+    projection.ortho(0, size.width(), size.height(), 0, -1, 1);
+    shader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, projection);
+    shader->setUniform(GLShader::IntUniform::Sampler, 0);
+    setup(shader);
+    if (secondary) {
+        glActiveTexture(GL_TEXTURE1);
+        secondary->bind();
+        glActiveTexture(GL_TEXTURE0);
+    }
+    source->bind();
+    source->render(size);
+}
+
+static bool allocateTarget(std::unique_ptr<GLTexture> &texture, std::unique_ptr<GLFramebuffer> &framebuffer, QSize size)
+{
+    if (texture && framebuffer && texture->size() == size) return true;
+    framebuffer.reset();
+    texture = GLTexture::allocate(GL_RGBA8, size);
+    if (!texture) return false;
+    texture->setFilter(GL_LINEAR);
+    texture->setWrapMode(GL_CLAMP_TO_EDGE);
+    framebuffer = std::make_unique<GLFramebuffer>(texture.get());
+    return framebuffer->valid();
+}
+
 bool WindowEnhancementEffect::cleanupCapture(WindowState &state)
 {
-    if (!state.cleanupTexture) {
-        state.cleanupTexture = GLTexture::allocate(GL_RGBA8, state.size);
-        if (!state.cleanupTexture) return false;
-        state.cleanupTexture->setFilter(GL_LINEAR);
-        state.cleanupTexture->setWrapMode(GL_CLAMP_TO_EDGE);
-        state.cleanupFramebuffer = std::make_unique<GLFramebuffer>(state.cleanupTexture.get());
-        if (!state.cleanupFramebuffer->valid()) return false;
-    }
-    {
-        const bool blend = glIsEnabled(GL_BLEND), scissor = glIsEnabled(GL_SCISSOR_TEST), dither = glIsEnabled(GL_DITHER);
-        GLint activeTexture = 0, binding = 0;
-        glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
-        glActiveTexture(GL_TEXTURE0);
-        glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
-        GLFramebuffer::pushFramebuffer(state.cleanupFramebuffer.get());
-        const auto restore = qScopeGuard([&] {
-            GLFramebuffer::popFramebuffer();
-            glBindTexture(GL_TEXTURE_2D, binding);
-            glActiveTexture(activeTexture);
-            if (blend) glEnable(GL_BLEND);
-            if (scissor) glEnable(GL_SCISSOR_TEST);
-            if (dither) glEnable(GL_DITHER);
-        });
-        glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST); glDisable(GL_DITHER);
-        ShaderBinder binder(m_cleanupShader.get());
-        QMatrix4x4 projection;
-        projection.ortho(0, state.size.width(), state.size.height(), 0, -1, 1);
-        m_cleanupShader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, projection);
-        m_cleanupShader->setUniform(GLShader::IntUniform::Sampler, 0);
-        m_cleanupShader->setUniform("texelSize", QVector2D(1.0f / state.size.width(), 1.0f / state.size.height()));
-        m_cleanupShader->setUniform("cleanupStrength", m_compressionCleanup * m_strength);
-        m_cleanupShader->setUniform("pixelScale", float(state.scale));
-        state.texture->bind(); state.texture->render(state.size); state.texture->unbind();
-    }
+    if (!allocateTarget(state.cleanupTexture, state.cleanupFramebuffer, state.size)) return false;
+    renderPass(m_cleanupShader.get(), state.texture.get(), nullptr, state.cleanupFramebuffer.get(), state.size, [&](GLShader *shader) {
+        shader->setUniform("texelSize", QVector2D(1.0f / state.size.width(), 1.0f / state.size.height()));
+        shader->setUniform("cleanupStrength", m_compressionCleanup * m_strength);
+        shader->setUniform("pixelScale", float(state.scale));
+    });
     // The rest of the pipeline consumes the cleaned capture, including CAS,
     // NVIDIA input, pending-frame fallback and the final original/AI blend.
     std::swap(state.texture, state.cleanupTexture);
     std::swap(state.framebuffer, state.cleanupFramebuffer);
     ++m_cleanupDraws;
     return true;
+}
+
+// Modes: 0 spatial shader, 1 original while AI is pending, 2 AI+CAS, 3 CAS only.
+bool WindowEnhancementEffect::filterActive(int mode) const
+{
+    switch (mode) {
+    case 0: return m_strength > 0 && (m_denoise > 0 || m_sharpen > 0);
+    case 2: return true;
+    case 3: return m_strength > 0 && m_nvidiaSharpen > 0;
+    default: return false;
+    }
+}
+
+bool WindowEnhancementEffect::process(WindowState &state, int mode, GLTexture *aiOutput)
+{
+    WindowState::ProcessKey key{state.revision, 0, mode, m_denoise * m_strength, m_sharpen * m_strength,
+        m_nvidiaSharpen, m_strength};
+#ifdef KWIN_VFX_NVIDIA_BACKEND
+    if (aiOutput) key.aiRevision = state.nvidia->completedRevision();
+#endif
+    if (state.processed && state.processedKey == key) return true;
+    if (!allocateTarget(state.processed, state.processedFramebuffer, state.size)) return false;
+    renderPass(m_processShader.get(), state.texture.get(), aiOutput, state.processedFramebuffer.get(), state.size, [&](GLShader *shader) {
+        shader->setUniform("aiSampler", 1);
+        shader->setUniform("filterMode", mode);
+        shader->setUniform("texelSize", QVector2D(1.0f / state.size.width(), 1.0f / state.size.height()));
+        shader->setUniform("aiTexelSize", aiOutput
+            ? QVector2D(1.0f / aiOutput->width(), 1.0f / aiOutput->height()) : QVector2D());
+        shader->setUniform("denoiseStrength", key.denoise);
+        shader->setUniform("sharpenStrength", key.sharpen);
+        shader->setUniform("casStrength", m_nvidiaSharpen * m_strength);
+        shader->setUniform("aiSharpenStrength", m_nvidiaSharpen);
+        shader->setUniform("enhancementStrength", m_strength);
+    });
+    state.processedKey = key;
+    ++m_processDraws;
+    return true;
+}
+
+void WindowEnhancementEffect::nvidiaProgress()
+{
+    m_nvidiaEventQueued.store(false);
+    collectRetired();
+#ifdef KWIN_VFX_NVIDIA_BACKEND
+    for (auto &[window, state] : m_windows)
+        if (state->nvidia || state->awaitingAi) window->addRepaintFull();
+#endif
+}
+
+void WindowEnhancementEffect::scheduleAiWake(std::chrono::steady_clock::duration delay)
+{
+    const int ms = int(std::chrono::ceil<std::chrono::milliseconds>(delay).count()) + 1;
+    if (!m_aiStableTimer.isActive() || m_aiStableTimer.remainingTime() > ms) m_aiStableTimer.start(ms);
 }
 
 bool WindowEnhancementEffect::paint(WindowState &state, const RenderTarget &target,
@@ -756,10 +835,21 @@ bool WindowEnhancementEffect::paint(WindowState &state, const RenderTarget &targ
         }
         state.awaitingAi = false;
         if (!state.nvidia) {
-            if (std::chrono::steady_clock::now() >= state.aiStableAt && m_retiredSlots.empty()) {
-                state.nvidia = std::make_unique<NvidiaSlot>(m_nvidiaRoot, state.size, m_nvidiaMode, hdrEnabled, !m_casOnly, m_hdrPeakNits);
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= state.aiStableAt && m_retiredSlots.empty()) {
+                // Worker transitions wake the compositor instead of polling.
+                const auto notify = [this] {
+                    if (!m_nvidiaEventQueued.exchange(true))
+                        QMetaObject::invokeMethod(this, &WindowEnhancementEffect::nvidiaProgress, Qt::QueuedConnection);
+                };
+                state.nvidia = std::make_unique<NvidiaSlot>(m_nvidiaRoot, state.size, m_nvidiaMode, hdrEnabled, !m_casOnly,
+                    m_hdrPeakNits, notify);
                 ++m_aiSlotStarts;
-            } else state.awaitingAi = true;
+            } else {
+                // Retired slots notify when finished; the resize delay needs a timer.
+                state.awaitingAi = true;
+                if (now < state.aiStableAt) scheduleAiWake(state.aiStableAt - now);
+            }
         }
         if (state.nvidia && !state.nvidia->error().isEmpty()) {
             const auto error = state.nvidia->error();
@@ -785,12 +875,24 @@ bool WindowEnhancementEffect::paint(WindowState &state, const RenderTarget &targ
         retireSlot(state);
     }
 #endif
+    const bool hdrResult = aiOutput && hdrEnabled;
+    // The SDR path filters into a cached texture only when its inputs change;
+    // every repaint below is one texture fetch plus grain and color conversion.
+    GLTexture *source = state.texture.get();
+    if (!hdrResult && !m_testTint) {
+        const int mode = m_casOnly ? 3 : !nvidia ? 0 : aiOutput ? 2 : m_nvidiaSharpen > 0 ? 3 : 1;
+        if (filterActive(mode)) {
+            if (!process(state, mode, aiOutput)) return false;
+            source = state.processed.get();
+        }
+    }
+
     const double scale = viewport.scale();
     RectF rect = snapToPixels(window->expandedGeometry(), scale);
     rect.moveTopLeft(rect.topLeft() - snapToPixels(window->frameGeometry(), scale).topLeft());
     RenderGeometry geometry;
     geometry.appendWindowQuad(WindowQuad::fromRect(rect), scale);
-    geometry.postProcessTextureCoordinates(state.texture->matrix(NormalizedCoordinates));
+    geometry.postProcessTextureCoordinates(source->matrix(NormalizedCoordinates));
 
     GLVertexBuffer *vbo = GLVertexBuffer::streamingBuffer();
     vbo->reset();
@@ -805,22 +907,17 @@ bool WindowEnhancementEffect::paint(WindowState &state, const RenderTarget &targ
         return false;
     }
 
-    const bool hdrResult = aiOutput && hdrEnabled;
     auto *shader = hdrResult ? m_hdrShader.get() : m_shader.get();
     ShaderBinder binder(shader);
     shader->setUniform(GLShader::IntUniform::Sampler, 0);
     if (!m_testTint) {
         shader->setUniform("texelSize", QVector2D(1.0f / state.texture->width(), 1.0f / state.texture->height()));
-        shader->setUniform("denoiseStrength", m_denoise * m_strength);
-        shader->setUniform("sharpenStrength", m_sharpen * m_strength);
-        shader->setUniform("filterMode", m_casOnly ? 3 : !nvidia ? 0 : aiOutput ? 2 : m_nvidiaSharpen > 0 ? 3 : 1);
-        shader->setUniform("aiSampler", 1);
-        shader->setUniform("enhancementStrength", m_strength);
-        shader->setUniform("aiSharpenStrength", m_nvidiaSharpen);
-        shader->setUniform("aiTexelSize", aiOutput
-            ? QVector2D(1.0f / aiOutput->width(), 1.0f / aiOutput->height()) : QVector2D());
         shader->setUniform("grainStrength", m_grain * m_strength);
         shader->setUniform("grainFrame", m_grainFrame);
+        if (hdrResult) {
+            shader->setUniform("aiSampler", 1);
+            shader->setUniform("enhancementStrength", m_strength);
+        }
     }
     QMatrix4x4 mvp = viewport.projectionMatrix();
     mvp.translate(std::round(window->x() * scale), std::round(window->y() * scale));
@@ -875,23 +972,19 @@ bool WindowEnhancementEffect::paint(WindowState &state, const RenderTarget &targ
     }
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    state.texture->bind();
-    if (aiOutput) { glActiveTexture(GL_TEXTURE1); aiOutput->bind(); glActiveTexture(GL_TEXTURE0); }
+    source->bind();
+    if (hdrResult) { glActiveTexture(GL_TEXTURE1); aiOutput->bind(); glActiveTexture(GL_TEXTURE0); }
     vbo->bindArrays();
     vbo->draw(clipRegion, GL_TRIANGLES, 0, geometry.count(), clipping);
     vbo->unbindArrays();
-    state.texture->unbind();
-    if (aiOutput) {
-        glActiveTexture(GL_TEXTURE1); aiOutput->unbind(); glActiveTexture(GL_TEXTURE0); ++m_nvidiaDraws;
+    source->unbind();
+    if (hdrResult) { glActiveTexture(GL_TEXTURE1); aiOutput->unbind(); glActiveTexture(GL_TEXTURE0); }
+    if (aiOutput) ++m_nvidiaDraws;
 #ifdef KWIN_VFX_NVIDIA_BACKEND
-        state.presentedRevision = state.nvidia->completedRevision();
-#endif
-    }
-#ifdef KWIN_VFX_NVIDIA_BACKEND
+    // A fence is created after the draw above, so the worker never overwrites
+    // a texture this frame still samples.
     if (nvidia && state.nvidia && state.nvidia->size() == state.size)
         state.nvidia->submit(state.texture.get(), state.revision, hdrEnabled ? m_nvidiaSharpen : 0);
-    if (m_nvidiaTimer && (state.awaitingAi || (state.nvidia && (state.nvidia->pending() || state.nvidia->size() != state.size
-        || !state.nvidia->matches(state.size, m_nvidiaMode, hdrEnabled, !m_casOnly, m_hdrPeakNits))))) m_nvidiaTimer->start();
 #endif
     return true;
 }

@@ -5,6 +5,7 @@
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <thread>
 
@@ -17,8 +18,11 @@ class Worker
 public:
     enum class State { Starting, Idle, Queued, Running, Ready, Failed, Stopping, Finished };
     struct Timing { double sdkCpuMs = 0; double totalMs = 0; double sdkGpuMs = -1; };
+    // notify runs on the worker thread after each transition the main thread
+    // acts on (Idle, Ready, Failed, finished). It must be thread-safe and cheap.
     Worker(QString root, QSize size, GLuint input, GLuint output, unsigned mode = 8, float strength = 1,
-        GLuint secondOutput = 0, bool trueHdr = false, bool restoration = true, unsigned peakNits = 650);
+        GLuint secondOutput = 0, bool trueHdr = false, bool restoration = true, unsigned peakNits = 650,
+        std::function<void()> notify = {});
     ~Worker();
     Worker(const Worker &) = delete;
     Worker &operator=(const Worker &) = delete;
@@ -35,6 +39,8 @@ public:
     QString error() const { return m_error; }
 private:
     void run();
+    void notify() const { if (m_notify) m_notify(); }
+    std::function<void()> m_notify;
     QString m_root;
     QSize m_size;
     GLuint m_input, m_output;

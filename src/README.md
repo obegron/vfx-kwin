@@ -8,7 +8,8 @@
   standalone interop/inference probes. No proprietary libraries are vendored.
 - `preview/`: Qt system tray controls for the desktop or a private test session.
 
-The effect owns its captured textures. Shader filtering runs during the final
-window draw; NVIDIA inference runs on a separate worker with explicit GL/CUDA
+The effect owns its captured textures. Shader filtering runs once per content
+or settings change into a cached texture; each repaint only adds grain and color
+conversion. NVIDIA inference runs on a separate worker with explicit GL/CUDA
 ownership transfers. See [architecture](../docs/architecture.md) and
 [validation](../docs/validation.md).

@@ -5,5 +5,6 @@
         <file alias="enhance-hdr.frag">shaders/enhance-hdr.frag</file>
         <file alias="nvidia-input.frag">shaders/nvidia-input.frag</file>
         <file alias="compression.frag">shaders/compression.frag</file>
+        <file alias="process.frag">shaders/process.frag</file>
     </qresource>
 </RCC>
