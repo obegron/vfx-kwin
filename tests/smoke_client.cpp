@@ -33,12 +33,15 @@ int main(int argc, char **argv)
     FilterFixture target(QStringLiteral("Target: Meta+Ctrl+E"));
     FilterFixture control(QStringLiteral("Control: must remain unchanged"));
     if (qEnvironmentVariableIsSet("KWIN_VFX_TEST_PATTERN")) {
+        const bool compression = qEnvironmentVariableIsSet("KWIN_VFX_TEST_COMPRESSION");
         QImage pattern(360, 240, QImage::Format_RGB32);
         unsigned seed = 1234567;
         for (int y = 0; y < pattern.height(); ++y) {
             for (int x = 0; x < pattern.width(); ++x) {
                 seed = seed * 1664525u + 1013904223u;
                 int value = x < 180 ? 128 + int(seed >> 24) % 25 - 12 : (x < 240 ? 65 : 195);
+                if (compression) value = x < 180 ? 20 + (((x + 3) / 8 + (y + 1) / 8) % 2 ? 4 : -4)
+                    : x < 240 ? 65 : y < 120 ? 195 : 100;
                 pattern.setPixelColor(x, y, QColor(value, value, value));
             }
         }

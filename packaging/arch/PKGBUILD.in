@@ -28,6 +28,7 @@ build() {
 check() {
     # Package builds need neither a running compositor nor GPU access.
     build/kwin_vfx_profile_reset_test
+    build/kwin_vfx_frame_limits_test
     python "kwin-vfx-${pkgver}/tests/packaging_test.py"
 }
 

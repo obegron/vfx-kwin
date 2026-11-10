@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vfx_worker.h"
+#include "frame_limits.h"
 #include "vfx_runtime.h"
 #include <cudaGL.h>
 #include <QThread>
@@ -101,7 +102,7 @@ Worker::Worker(QString root, QSize size, GLuint input, GLuint output, unsigned m
         EGLint purge = EGL_FALSE;
         if (eglQueryContext(m_display, m_share, EGL_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV, &purge)) m_resetOnPurge = purge;
     }
-    require(!size.isEmpty() && size.width() <= 3840 && size.height() <= 2160, "NVIDIA slot dimensions exceed audited range");
+    validateFrameSize(size);
     require(mode == 0 || (mode >= 8 && mode <= 15), "Worker requires a same-size denoise/deblur or identity mode");
     require(m_restoration || m_trueHdr, "Worker pipeline is empty");
     require(!m_trueHdr || (peakNits >= 400 && peakNits <= 2000), "TrueHDR peak outside SDK range");

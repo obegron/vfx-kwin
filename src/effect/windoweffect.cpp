@@ -3,6 +3,7 @@
 // Capture/drawing patterns adapted from KWin 6.8.1 OffscreenEffect.
 #include "windoweffect.h"
 #include "renderprofile.h"
+#include "colorpolicy.h"
 #ifdef KWIN_VFX_NVIDIA_BACKEND
 #include "nvidiaslot.h"
 #endif
@@ -71,10 +72,7 @@ public:
 static bool hasHdrContent(const Item *item, const Item *effectOutput = nullptr)
 {
     if (item == effectOutput) return false;
-    const auto &color = item->colorDescription();
-    const auto transfer = color->transferFunction().type;
-    if (transfer == TransferFunction::PerceptualQuantizer || transfer == TransferFunction::HLG
-        || color->maxHdrLuminance().value_or(color->referenceLuminance()) > color->referenceLuminance() * 1.01) {
+    if (sourceHasHdrHeadroom(*item->colorDescription())) {
         return true;
     }
     for (Item *child : item->childItems()) {
@@ -92,6 +90,8 @@ struct WindowEnhancementEffect::WindowState
     // Reverse destruction order keeps the texture alive until its FBO is gone.
     std::unique_ptr<GLTexture> texture;
     std::unique_ptr<GLFramebuffer> framebuffer;
+    std::unique_ptr<GLTexture> cleanupTexture;
+    std::unique_ptr<GLFramebuffer> cleanupFramebuffer;
     ItemEffect itemEffect;
     std::unique_ptr<HdrHeadroomItem> hdrHeadroom;
     QMetaObject::Connection damageConnection;
@@ -222,6 +222,7 @@ WindowEnhancementEffect::~WindowEnhancementEffect()
     m_retiredSlots.clear();
 #endif
     m_shader.reset();
+    m_cleanupShader.reset();
     m_hdrShader.reset();
     m_profile.reset();
     effects->addRepaintFull();
@@ -239,7 +240,7 @@ bool WindowEnhancementEffect::isActive() const
 
 bool WindowEnhancementEffect::processingEnabled() const
 {
-    return m_testTint || (m_strength > 0 && (usingNvidia() || m_grain > 0
+    return m_testTint || (m_strength > 0 && (usingNvidia() || m_grain > 0 || m_compressionCleanup > 0
         || (m_casOnly ? m_nvidiaSharpen > 0 : m_denoise > 0 || m_sharpen > 0)));
 }
 
@@ -298,7 +299,11 @@ void WindowEnhancementEffect::reconfigure(ReconfigureFlags)
         const float value = config.readEntry(key, fallback);
         return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
     };
+    const float oldCleanup = m_compressionCleanup * m_strength;
     m_strength = read("Strength", 0.6f);
+    m_compressionCleanup = read("CompressionCleanup", 0.0f);
+    if (oldCleanup != m_compressionCleanup * m_strength)
+        for (auto &[window, state] : m_windows) state->dirty = true;
     m_denoise = read("Denoise", 0.5f);
     m_sharpen = read("Sharpen", 0.35f);
     const float oldCas = m_nvidiaSharpen;
@@ -330,6 +335,8 @@ void WindowEnhancementEffect::changeStrength(float delta)
     KConfigGroup config(effects->config(), QStringLiteral("Effect-kwin_vfx"));
     config.writeEntry("Strength", m_strength);
     config.sync();
+    if (m_compressionCleanup > 0)
+        for (auto &[window, state] : m_windows) state->dirty = true;
     updateRedirects();
     qCInfo(KWIN_VFX) << "Strength:" << m_strength;
 }
@@ -370,6 +377,26 @@ QString WindowEnhancementEffect::debug(const QString &parameter) const
     if (m_lastTargetColor) result.insert("last_target_color", colorInfo(m_lastTargetColor));
     result.insert("nvidia_draws", double(m_nvidiaDraws));
     result.insert("nvidia_error", m_nvidiaError);
+    result.insert("processing_error", m_processingError);
+    result.insert("compression_cleanup", m_compressionCleanup);
+    result.insert("cleanup_draws", double(m_cleanupDraws));
+    if (parameter == QStringLiteral("windows")) {
+        QJsonArray windows;
+        for (const auto *window : effects->stackingOrder()) {
+            if (!selectableWindow(window)) continue;
+            QJsonArray items;
+            const auto appendItems = [&](const auto &self, const Item *item) -> void {
+                auto info = colorInfo(item->colorDescription());
+                info.insert("type", QString::fromLatin1(item->metaObject()->className()));
+                items.append(info);
+                for (const Item *child : item->childItems()) self(self, child);
+            };
+            appendItems(appendItems, window->windowItem());
+            windows.append(QJsonObject{{"id", window->internalId().toString(QUuid::WithoutBraces)},
+                {"application", window->windowClass()}, {"items", items}});
+        }
+        result.insert("windows", windows);
+    }
     result.insert("stale_ai_outputs", double(m_staleAiOutputs));
     result.insert("ai_slot_starts", double(m_aiSlotStarts));
 #ifdef KWIN_VFX_NVIDIA_BACKEND
@@ -415,6 +442,11 @@ bool WindowEnhancementEffect::ensureShader()
 {
     if (m_shaderFailed) {
         return false;
+    }
+    if (m_compressionCleanup > 0 && !m_cleanupShader) {
+        m_cleanupShader = ShaderManager::instance()->generateShaderFromFile(
+            ShaderTrait::MapTexture, {}, QStringLiteral(":/kwin-vfx/compression.frag"));
+        if (!m_cleanupShader) { m_shaderFailed = true; return false; }
     }
     if (!m_shader) {
         if (m_testFailure == "shader") {
@@ -606,6 +638,8 @@ bool WindowEnhancementEffect::capture(WindowState &state, EffectWindow *window, 
         return false;
     }
     if (!state.texture || state.size != size || state.scale != scale) {
+        state.cleanupFramebuffer.reset();
+        state.cleanupTexture.reset();
         state.framebuffer.reset();
         state.texture = GLTexture::allocate(GL_RGBA8, size);
         if (!state.texture) {
@@ -626,34 +660,86 @@ bool WindowEnhancementEffect::capture(WindowState &state, EffectWindow *window, 
         return true;
     }
 
-    const RenderTarget captureTarget(state.framebuffer.get());
-    const RenderViewport captureViewport(logicalGeometry, scale, captureTarget, QPoint());
-    GLFramebuffer::pushFramebuffer(state.framebuffer.get());
-    const auto restoreFramebuffer = qScopeGuard([] { GLFramebuffer::popFramebuffer(); });
-    GLfloat clearColor[4];
-    glGetFloatv(GL_COLOR_CLEAR_VALUE, clearColor);
-    const bool scissor = glIsEnabled(GL_SCISSOR_TEST);
-    const auto restoreClearState = qScopeGuard([&] {
-        glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
-        if (scissor) {
-            glEnable(GL_SCISSOR_TEST);
-        } else {
-            glDisable(GL_SCISSOR_TEST);
+    {
+        const RenderTarget captureTarget(state.framebuffer.get());
+        const RenderViewport captureViewport(logicalGeometry, scale, captureTarget, QPoint());
+        GLFramebuffer::pushFramebuffer(state.framebuffer.get());
+        const auto restoreFramebuffer = qScopeGuard([] { GLFramebuffer::popFramebuffer(); });
+        GLfloat clearColor[4];
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, clearColor);
+        const bool scissor = glIsEnabled(GL_SCISSOR_TEST);
+        const auto restoreClearState = qScopeGuard([&] {
+            glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+            if (scissor) {
+                glEnable(GL_SCISSOR_TEST);
+            } else {
+                glDisable(GL_SCISSOR_TEST);
+            }
+        });
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        WindowPaintData captureData;
+        captureData.setOpacity(1);
+        if (!effects->drawWindow(captureTarget, captureViewport, window,
+                PAINT_WINDOW_TRANSFORMED | PAINT_WINDOW_TRANSLUCENT, Region::infinite(), captureData)
+            || m_testFailure == "capture") {
+            return false;
         }
-    });
-    glDisable(GL_SCISSOR_TEST);
-    glClearColor(0, 0, 0, 0);
-    glClear(GL_COLOR_BUFFER_BIT);
-    WindowPaintData captureData;
-    captureData.setOpacity(1);
-    if (!effects->drawWindow(captureTarget, captureViewport, window,
-            PAINT_WINDOW_TRANSFORMED | PAINT_WINDOW_TRANSLUCENT, Region::infinite(), captureData)
-        || m_testFailure == "capture") {
-        return false;
+    }
+    if (m_compressionCleanup > 0 && !m_testTint) {
+        if (!cleanupCapture(state)) return false;
+    } else {
+        state.cleanupFramebuffer.reset();
+        state.cleanupTexture.reset();
     }
     state.dirty = false;
     state.captured = true;
     ++state.revision;
+    return true;
+}
+
+bool WindowEnhancementEffect::cleanupCapture(WindowState &state)
+{
+    if (!state.cleanupTexture) {
+        state.cleanupTexture = GLTexture::allocate(GL_RGBA8, state.size);
+        if (!state.cleanupTexture) return false;
+        state.cleanupTexture->setFilter(GL_LINEAR);
+        state.cleanupTexture->setWrapMode(GL_CLAMP_TO_EDGE);
+        state.cleanupFramebuffer = std::make_unique<GLFramebuffer>(state.cleanupTexture.get());
+        if (!state.cleanupFramebuffer->valid()) return false;
+    }
+    {
+        const bool blend = glIsEnabled(GL_BLEND), scissor = glIsEnabled(GL_SCISSOR_TEST), dither = glIsEnabled(GL_DITHER);
+        GLint activeTexture = 0, binding = 0;
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+        glActiveTexture(GL_TEXTURE0);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
+        GLFramebuffer::pushFramebuffer(state.cleanupFramebuffer.get());
+        const auto restore = qScopeGuard([&] {
+            GLFramebuffer::popFramebuffer();
+            glBindTexture(GL_TEXTURE_2D, binding);
+            glActiveTexture(activeTexture);
+            if (blend) glEnable(GL_BLEND);
+            if (scissor) glEnable(GL_SCISSOR_TEST);
+            if (dither) glEnable(GL_DITHER);
+        });
+        glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST); glDisable(GL_DITHER);
+        ShaderBinder binder(m_cleanupShader.get());
+        QMatrix4x4 projection;
+        projection.ortho(0, state.size.width(), state.size.height(), 0, -1, 1);
+        m_cleanupShader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, projection);
+        m_cleanupShader->setUniform(GLShader::IntUniform::Sampler, 0);
+        m_cleanupShader->setUniform("texelSize", QVector2D(1.0f / state.size.width(), 1.0f / state.size.height()));
+        m_cleanupShader->setUniform("cleanupStrength", m_compressionCleanup * m_strength);
+        m_cleanupShader->setUniform("pixelScale", float(state.scale));
+        state.texture->bind(); state.texture->render(state.size); state.texture->unbind();
+    }
+    // The rest of the pipeline consumes the cleaned capture, including CAS,
+    // NVIDIA input, pending-frame fallback and the final original/AI blend.
+    std::swap(state.texture, state.cleanupTexture);
+    std::swap(state.framebuffer, state.cleanupFramebuffer);
+    ++m_cleanupDraws;
     return true;
 }
 
@@ -818,8 +904,8 @@ bool WindowEnhancementEffect::drawWindow(const RenderTarget &target, const Rende
     if (it == m_windows.end() || !processingEnabled()) {
         return effects->drawWindow(target, viewport, window, mask, region, data);
     }
-    // Capture is explicitly SDR gamma 2.2. Only the TrueHDR shader supports an
-    // HDR destination; already-HDR source windows bypass SDR enhancement.
+    // Both final shaders convert into the destination encoding. The SDR
+    // capture path still bypasses windows that already contain HDR pixels.
     const auto &color = target.colorDescription();
     m_lastTargetColor = color;
     const bool hdr = color->transferFunction().type == TransferFunction::PerceptualQuantizer
@@ -828,16 +914,23 @@ bool WindowEnhancementEffect::drawWindow(const RenderTarget &target, const Rende
     m_hdrOutputSeen |= hdr;
     if (m_profile) m_profile->begin();
     bool success = false;
+    QString failure;
     try {
-        success = ensureShader() && (!hdr || m_trueHdr) && !hasHdrContent(window->windowItem(), it->second->hdrHeadroom.get())
-            && capture(*it->second, window, viewport) && paint(*it->second, target, viewport, window, region, data);
+        if (!ensureShader()) failure = QStringLiteral("Enhancement shader unavailable");
+        else if (hasHdrContent(window->windowItem(), it->second->hdrHeadroom.get()))
+            failure = QStringLiteral("Window contains native HDR content; SDR enhancement cannot process it");
+        else if (!capture(*it->second, window, viewport)) failure = QStringLiteral("Window capture failed");
+        else if (!paint(*it->second, target, viewport, window, region, data)) failure = QStringLiteral("Enhancement rendering failed");
+        else { success = true; m_processingError.clear(); }
     } catch (const std::exception &error) {
         m_nvidiaError = QString::fromUtf8(error.what());
+        failure = m_nvidiaError;
         qCWarning(KWIN_VFX) << "Enhancement exception:" << error.what();
     }
     if (m_profile) m_profile->end(it->second->size, it->second->captured, success);
     if (!success) {
-        qCWarning(KWIN_VFX) << "Unsupported color target or processing failure; disabling" << window;
+        m_processingError = failure;
+        qCWarning(KWIN_VFX) << failure << "; disabling" << window;
         disableWindow(window);
         return effects->drawWindow(target, viewport, window, mask, region, data);
     }

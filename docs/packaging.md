@@ -13,6 +13,11 @@ entirely native C++; Python is used only for installation/setup helpers.
 
 ## Arch: build a package with makepkg
 
+Choose this route or the user-only route below. Install only one copy of the
+effect and use its matching setup/tray commands. The personal rebuild hook
+requires the user-only route. `kwin-vfx-setup enable` rejects conflicting system
+and user plugin copies rather than silently mixing their startup configuration.
+
 From this checkout:
 
 ```sh
@@ -193,10 +198,11 @@ than a claim of NVIDIA support for Arch.
 Setup copies existing `Effect-kwin_vsr` preferences into the new group, preserving
 values already set under `Effect-kwin_vfx`. It keeps the existing runtime path
 when no newer verified per-user runtime is installed, disables old plugin autoload and backs up the old tray autostart
-entry. It does not rename the checkout directory or move a live runtime.
+entry and application launcher. It does not rename the checkout directory or move a live runtime.
 
 If the old plugin is running, setup leaves it running and requests a fresh login
-to switch names. It does not load both plugins against the same controls. The
+to switch names. Start the new tray after that login; the old tray controls only
+the legacy effect. It does not load both plugins against the same controls. The
 old manual system plugin may remain on disk, with its autoload disabled. Current
 window selections are session-only, so windows start unchecked after login.
 

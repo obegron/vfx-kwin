@@ -6,6 +6,14 @@ separate Firefox profile. Closing it exits the test compositor. Logs and
 screenshots stay in the printed temporary directory; they can contain window
 titles and local paths and should be reviewed before sharing.
 
+For Brave on an HDR desktop, run the NVIDIA build with
+`KWIN_VFX_REQUIRE_PQ_SDR=1 scripts/try-nvidia.sh python3 tests/brave-smoke.py`.
+This uses a temporary browser profile and local page, and checks that SDR
+content encoded as PQ stays selected and receives AI frames with TrueHDR off.
+`build/kwin_vfx_color_policy_test` checks that actual HDR and unknown PQ/HLG
+sources still bypass SDR capture. The display's HDR setting does not itself
+make all browser content HDR.
+
 ## Build
 
 Install the development dependencies in [packaging](packaging.md), then:
@@ -17,6 +25,7 @@ python3 tests/packaging_test.py
 build/kwin_vfx_profile_reset_test
 scripts/run-nested.sh python tests/enhancement-smoke.py
 scripts/run-nested.sh python tests/cas-smoke.py
+scripts/run-nested.sh python tests/compression-smoke.py
 scripts/run-nested.sh python tests/grain-smoke.py
 scripts/run-nested.sh python tests/window-control-smoke.py
 ```
@@ -75,6 +84,7 @@ cmake --build build-ai
 export KWIN_VFX_NVIDIA_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/kwin-vfx/runtime/nvidia-vfx-0.2.0.0"
 scripts/try-nvidia.sh python tests/nvidia-smoke.py
 scripts/try-nvidia.sh python tests/retirement-smoke.py
+scripts/try-nvidia.sh python tests/nvidia-size-smoke.py
 scripts/try-nvidia.sh --video /path/to/video.mp4
 ```
 
@@ -84,6 +94,21 @@ The optional tray can target the printed `session.json` via
 SDK failures should return to shader/original drawing. Also test missing runtime,
 unsupported dimensions, mode changes, repeated disable/enable, interactive
 resize, window closure and explicit effect unload/reload.
+
+The size test exercises a capture larger than 3840×2160 on both axes, followed by
+resize recovery. The CPU-only `kwin_vfx_frame_limits_test` checks the allocation
+budget and portrait/overscan cases without loading the SDK. Standalone worker
+probes can verify large or portrait dimensions independently of KWin.
+
+`kwin_vfx_shader_probe` tests compression cleanup on shifted 4/8/16-pixel dark
+blocks at several sampling scales, as well as hard edges, bright texture,
+alpha, solid fills and exact off bypass. `--benchmark-cleanup` measures the
+cleanup draw alone at 1080p and 4K; it excludes capture and presentation.
+`--cleanup-input image.png --cleanup-image cleaned.png` renders a 75% preview
+with the actual shared shader. Synthetic boundary reduction is not a perceptual
+quality score. Compare a fixed real frame for unwanted loss of shadow detail.
+`compression-smoke.py` checks the real capture pass, orientation, selection,
+strength, off/pause, capture reuse, resize, CAS and optional NVIDIA integration.
 
 Standalone probes isolate SDK and interop failures from KWin:
 `kwin_vfx_cuda_gl_probe`, `kwin_vfx_native_vfx_probe` and

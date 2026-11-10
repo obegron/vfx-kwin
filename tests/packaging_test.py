@@ -139,6 +139,7 @@ class RuntimeLicenseTests(unittest.TestCase):
     def test_user_installer_forwards_acceptance(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);bin_dir=root/"bin";bin_dir.mkdir()
+            pacman=bin_dir/"pacman";pacman.write_text("#!/bin/sh\nexit 1\n");pacman.chmod(0o755)
             cmake=bin_dir/"cmake"
             cmake.write_text('#!/bin/sh\nif [ "$1" = --install ]; then\nmkdir -p "$DESTDIR$VFX_TEST_INSTALL_PREFIX/share/kwin-vfx"\nprintf "{}\\n" > "$DESTDIR$VFX_TEST_INSTALL_PREFIX/share/kwin-vfx/installation.json"\nfi\nexit 0\n')
             cmake.chmod(0o755);(root/"build").mkdir()
@@ -153,6 +154,19 @@ class RuntimeLicenseTests(unittest.TestCase):
 
 
 class UserInstallationTests(unittest.TestCase):
+    @unittest.skipIf(os.geteuid()==0,"The user installer refuses root")
+    def test_user_installer_rejects_an_existing_package_before_building(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);bin_dir=root/"bin";bin_dir.mkdir();marker=root/"built"
+            for name,body in (("pacman","exit 0"),("cmake",'touch "$VFX_TEST_BUILD_MARKER"')):
+                command=bin_dir/name;command.write_text("#!/bin/sh\n"+body+"\n");command.chmod(0o755)
+            environment=dict(os.environ,PATH=str(bin_dir)+os.pathsep+os.environ["PATH"],VFX_TEST_BUILD_MARKER=str(marker))
+            result=subprocess.run(["bash",str(ROOT/"scripts/install-user.sh"),"--no-setup","--prefix",str(root/"prefix")],
+                                  env=environment,text=True,capture_output=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn("pacman-managed",result.stderr)
+            self.assertFalse(marker.exists());self.assertFalse((root/"prefix").exists())
+
     def test_install_replaces_inode_and_preserves_an_open_library(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);build=root/"build";build.mkdir();prefix=root/"prefix"
@@ -229,6 +243,44 @@ class UserHookTests(unittest.TestCase):
 
 
 class DesktopSetupTests(unittest.TestCase):
+    def test_retired_launchers_and_existing_backups_leave_autostart_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);home=root/"config";data=root/"data"
+            legacy='[Desktop Entry]\nExec="/home/user/.local/bin/kwin-vsr-tray" --desktop\n'
+            paths=[home/"autostart/kwin-vsr-tray.desktop",
+                   home/"autostart/kwin-vsr-tray.desktop.before-kwin-vfx-20261025-235958",
+                   data/"applications/kwin-vsr-tray.desktop"]
+            for path in paths:path.parent.mkdir(parents=True,exist_ok=True);path.write_text(legacy)
+            current=home/"autostart/kwin-vfx-tray.desktop";current.write_text("current tray")
+            unrelated=home/"autostart/kwin-vsr-tray.desktop.custom";unrelated.write_text("unrelated application")
+            archived=setup.archive_legacy_entries(home,data)
+            self.assertEqual(len(archived),len(paths))
+            self.assertTrue(all(not path.exists() for path in paths))
+            self.assertTrue(all(path.is_relative_to(home/"kwin-vfx/backups") for path in archived))
+            self.assertTrue(all(path.read_text()==legacy for path in archived))
+            self.assertEqual(current.read_text(),"current tray")
+            self.assertEqual(unrelated.read_text(),"unrelated application")
+            self.assertEqual(setup.archive_legacy_entries(home,data),[])
+
+    def test_duplicate_installations_are_reported_but_the_current_prefix_is_allowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);manifests=[];infos=[]
+            for name in ("user","system"):
+                prefix=root/name;plugin=prefix/"plugins/kwin/effects/plugins/kwin_vfx.so"
+                plugin.parent.mkdir(parents=True);plugin.write_text("fixture")
+                info={"plugin_root":str(prefix/"plugins")};infos.append(info)
+                manifest=prefix/"installation.json";manifest.write_text(json.dumps(info));manifests.append(manifest)
+            self.assertEqual(setup.installation_conflicts(infos[0],manifests),[str(manifests[1])])
+            self.assertEqual(setup.installation_conflicts(infos[0],[manifests[0]]),[])
+
+    def test_duplicate_installations_block_enable_before_any_settings_are_written(self):
+        with mock.patch.object(setup,"installation_conflicts",return_value=["other/installation.json"]), \
+             mock.patch.object(setup,"write_setting") as write, \
+             mock.patch.object(setup,"config_home") as home, \
+             self.assertRaisesRegex(ValueError,"Both system and user"):
+            setup.apply_enable({}, {})
+        write.assert_not_called();home.assert_not_called()
+
     def test_legacy_preferences_migrate_and_existing_vfx_values_win(self):
         with tempfile.TemporaryDirectory() as directory,mock.patch.dict(os.environ,{"XDG_CONFIG_HOME":directory,"XDG_DATA_HOME":directory,"QT_PLUGIN_PATH":"/tmp/other-qt"}):
             root=Path(directory);native=root/"runtime";(native/"nvvfx/libs").mkdir(parents=True)

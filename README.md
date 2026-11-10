@@ -9,7 +9,8 @@ KWin 6.8.1 is verified. The plugin uses private APIs and must be rebuilt after
 KWin updates; other minor releases require compatibility review.
 
 - GPU shaders provide Contrast Adaptive Sharpening (CAS), spatial denoise and
-  animated monochrome film grain without NVIDIA dependencies.
+  animated monochrome film grain without NVIDIA dependencies. Optional
+  compression cleanup smooths block boundaries in dark, low-contrast areas.
 - The optional NVIDIA backend provides AI denoise/deblur and TrueHDR using a
   separately installed NVIDIA VFX runtime. It processes the composed window;
   it does not perform source-resolution video super-resolution.
@@ -19,6 +20,9 @@ KWin updates; other minor releases require compatibility review.
   strength. New windows start unchecked.
 
 ## Installation
+
+Choose **one** method: an Arch package or a user installation. The personal
+automatic-rebuild hook requires the user installation. Avoid installing both.
 
 On Arch Linux, build and install the NVIDIA-enabled package from this checkout:
 
@@ -38,7 +42,9 @@ scripts/install-user.sh --download-runtime
 ```
 
 Log out and back in after the first user installation so KWin receives its
-plugin search path. Setup never restarts the compositor. See the
+plugin search path, then open **KWin VFX** from the application launcher.
+If migrating from `kwin-vsr`, use a fresh login before starting the new tray;
+the old tray controls the old effect. Setup never restarts the compositor. See the
 [packaging guide](docs/packaging.md) for dependencies, runtime licensing,
 configuration and removal.
 

@@ -52,10 +52,12 @@ private:
     void updateRedirects();
     void changeStrength(float delta);
     bool capture(WindowState &state, EffectWindow *window, const RenderViewport &viewport);
+    bool cleanupCapture(WindowState &state);
     bool paint(WindowState &state, const RenderTarget &target, const RenderViewport &viewport,
         EffectWindow *window, const Region &region, const WindowPaintData &data);
 
     std::unique_ptr<GLShader> m_shader;
+    std::unique_ptr<GLShader> m_cleanupShader;
     std::unique_ptr<GLShader> m_hdrShader;
     std::shared_ptr<ColorDescription> m_hdrColor;
     std::unique_ptr<RenderProfile> m_profile;
@@ -72,10 +74,13 @@ private:
     float m_strength = 0.6f;
     float m_denoise = 0.5f;
     float m_sharpen = 0.35f;
+    float m_compressionCleanup = 0;
+    uint64_t m_cleanupDraws = 0;
     bool m_shaderFailed = false;
     bool m_controlRegistered = false;
     QString m_nvidiaRoot;
     QString m_nvidiaError;
+    QString m_processingError;
     unsigned m_nvidiaMode = 8;
     float m_nvidiaSharpen = 0;
     bool m_casOnly = false;

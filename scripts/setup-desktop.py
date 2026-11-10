@@ -35,6 +35,21 @@ def installation(path=None):
     return json.loads(path.read_text())
 
 
+def installation_conflicts(info, manifests=None):
+    manifests=manifests if manifests is not None else (
+        Path.home()/".local/share/kwin-vfx/installation.json",Path("/usr/share/kwin-vfx/installation.json"))
+    root=Path(info["plugin_root"]).resolve()
+    conflicts=[]
+    for manifest in manifests:
+        try:
+            other=installation(manifest)
+            other_root=Path(other["plugin_root"]).resolve()
+            if other_root!=root and (other_root/"kwin/effects/plugins/kwin_vfx.so").is_file():
+                conflicts.append(str(manifest))
+        except (OSError,ValueError,KeyError):continue
+    return conflicts
+
+
 def enable_plan(info, args):
     default_runtime=Path(os.environ.get("XDG_DATA_HOME",str(Path.home()/".local/share")))/f"kwin-vfx/runtime/nvidia-vfx-{VERSION}"
     existing=read_setting("NvidiaRuntime") or read_setting("NvidiaRuntime",group="Effect-kwin_vsr")
@@ -88,7 +103,25 @@ def connection():
     except dbus.DBusException as error:raise ValueError(f"KWin's session bus is unavailable: {error}") from error
 
 
+def archive_legacy_entries(home, data):
+    # systemd's autostart generator also reads .desktop.before-* backups.
+    # Keep retired launchers outside every directory scanned for desktop files.
+    archived=[]
+    for directory in (home/"autostart", data/"applications"):
+        for path in directory.glob("kwin-vsr-tray.desktop*"):
+            if not path.is_file() or "kwin-vsr-tray" not in path.read_text():continue
+            backup=home/"kwin-vfx/backups"/directory.name/(path.name+"."+datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
+            backup.parent.mkdir(parents=True,exist_ok=True)
+            path.rename(backup)
+            archived.append(backup)
+    return archived
+
+
 def apply_enable(info,plan):
+    conflicts=installation_conflicts(info)
+    if conflicts:
+        raise ValueError("Both system and user KWin VFX installations are present. Choose one installation method "
+                         "before enabling it; see docs/packaging.md. Other installation: "+", ".join(conflicts))
     home=config_home();home.mkdir(parents=True,exist_ok=True)
     service=home/"systemd/user/plasma-kwin_wayland.service.d/60-kwin-vfx.conf"
     if "service_override" in plan and service.exists() and not service.read_text().startswith(MARKER):
@@ -100,14 +133,14 @@ def apply_enable(info,plan):
     for key,value in plan["settings"].items():write_setting(GROUP,key,value)
     if "service_override" in plan:
         service.parent.mkdir(parents=True,exist_ok=True);service.write_text(plan["service_override"])
-        subprocess.run(["systemctl","--user","daemon-reload"],check=True)
     if plan["autostart"]:
         autostart=home/"autostart/kwin-vfx-tray.desktop"
         autostart.parent.mkdir(parents=True,exist_ok=True)
         autostart.write_text(desktop_entry(Path(info["bindir"])/"kwin-vfx-tray"))
-    old_autostart=home/"autostart/kwin-vsr-tray.desktop"
-    if old_autostart.exists() and "kwin-vsr-tray" in old_autostart.read_text():
-        old_autostart.rename(old_autostart.with_suffix(".desktop.before-kwin-vfx-"+datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
+    data=Path(os.environ.get("XDG_DATA_HOME",str(Path.home()/".local/share")))
+    archived=archive_legacy_entries(home,data)
+    if "service_override" in plan or archived:
+        subprocess.run(["systemctl","--user","daemon-reload"],check=True)
     write_setting("Plugins","kwin_vsrEnabled","false")
     write_setting("Plugins","kwin_vfxEnabled","true")
     if plan["requires_login"]:
@@ -116,7 +149,8 @@ def apply_enable(info,plan):
         effects,properties=connection()
         loaded=properties.Get("org.kde.kwin.Effects","loadedEffects")
         if "kwin_vsr" in loaded:
-            print("Legacy kwin-vsr is still running. Settings migrated; log out and back in to switch to KWin VFX without interrupting it.")
+            print("Legacy kwin-vsr is still running. Settings migrated; log out and back in to switch to KWin VFX without interrupting it. "
+                  "The old tray controls the legacy effect until then; start the new tray after login.")
         elif "kwin_vfx" in loaded:
             print("Effect already loaded. Use a fresh login for a rebuilt plugin; the running compositor was not restarted.")
         elif effects.loadEffect("kwin_vfx"):
@@ -148,7 +182,7 @@ def main():
         info=installation(args.installation)
         plan=enable_plan(info,args)
         if args.action=="status" or args.dry_run:
-            print(json.dumps({"installation":info,**plan},indent=2));return 0
+            print(json.dumps({"installation":info,"conflicting_installations":installation_conflicts(info),**plan},indent=2));return 0
         if os.environ.get("KWIN_VFX_NESTED")=="1":raise ValueError("Run desktop setup outside the nested launcher")
         apply_enable(info,plan)
     except (OSError,ValueError,subprocess.CalledProcessError) as error:

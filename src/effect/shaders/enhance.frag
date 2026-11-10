@@ -65,7 +65,13 @@ void main()
         }
     }
     tex = addFilmGrain(tex);
-    tex = sourceEncodingToNitsInDestinationColorspace(tex);
+    if (tex.a <= 0.0) { fragColor = vec4(0.0); return; }
+    // Color transforms can include a black-point offset, and tone mapping is
+    // nonlinear. Apply them to straight RGB, then restore premultiplied alpha.
+    float alpha = tex.a;
+    tex = sourceEncodingToNitsInDestinationColorspace(vec4(tex.rgb / alpha, 1.0));
+    tex.rgb *= alpha;
+    tex.a = alpha;
     tex = adjustSaturation(tex);
     fragColor = nitsToDestinationEncoding(tex * modulation);
 }

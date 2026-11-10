@@ -18,7 +18,7 @@ effects = dbus.Interface(bus.get_object("org.kde.KWin", "/Effects"), "org.kde.kw
 scripting = dbus.Interface(bus.get_object("org.kde.KWin", "/Scripting"), "org.kde.kwin.Scripting")
 
 
-def configure(strength=0.6, denoise=0.5, sharpen=0.35, nvidia_mode=None, nvidia_sharpen=None, film_grain=None, cas_only=None, cas_strength=None, true_hdr=None, hdr_peak=None, true_hdr_sdr=None):
+def configure(strength=0.6, denoise=0.5, sharpen=0.35, nvidia_mode=None, nvidia_sharpen=None, film_grain=None, cas_only=None, cas_strength=None, true_hdr=None, hdr_peak=None, true_hdr_sdr=None, compression_cleanup=None):
     path = Path(os.environ["XDG_CONFIG_HOME"]) / "kwinrc"
     config = configparser.ConfigParser()
     config.optionxform = str
@@ -30,6 +30,8 @@ def configure(strength=0.6, denoise=0.5, sharpen=0.35, nvidia_mode=None, nvidia_
         config["Effect-kwin_vfx"]["NvidiaSharpen"] = str(nvidia_sharpen)
     if film_grain is not None:
         config["Effect-kwin_vfx"]["FilmGrain"] = str(film_grain)
+    if compression_cleanup is not None:
+        config["Effect-kwin_vfx"]["CompressionCleanup"] = str(compression_cleanup)
     if cas_only is not None:
         config["Effect-kwin_vfx"]["CasOnly"] = str(bool(cas_only)).lower()
     if cas_strength is not None:

@@ -72,6 +72,16 @@ try:
     click("VFX test control")
     assert state()["selected"]==2
     assert action("VFX test target")[1]["toggle-state"]==1
+    cleanup=action("Compression cleanup")
+    cleanup_half=next(n for n in cleanup[2] if str(n[1].get("label",""))=="50%")
+    assert cleanup_half[1].get("enabled",True)
+    menu.Event(dbus.Int32(cleanup_half[0]),"clicked",dbus.Int32(0,variant_level=1),dbus.UInt32(0),signature="isvu")
+    time.sleep(.4)
+    assert state()["compression_cleanup"]==.5,"Tray cleanup setting did not reach the effect"
+    cleanup_off=next(n for n in action("Compression cleanup")[2] if str(n[1].get("label",""))=="Off")
+    menu.Event(dbus.Int32(cleanup_off[0]),"clicked",dbus.Int32(0,variant_level=1),dbus.UInt32(0),signature="isvu")
+    time.sleep(.4)
+    assert state()["compression_cleanup"]==0
     if not state()["hdr_available"]:
         click("TrueHDR look — SDR tone mapping")
         deadline=time.monotonic()+30
@@ -96,7 +106,7 @@ try:
     assert not any(str(n[1].get("label","")).startswith("VFX test target") for n in nodes())
     result={"passed":True,"tray_window_checkboxes":True,"same_app_independent":True,"selection_preserves_focus":True,
         "checkbox_state_tracks_effect":True,"pause_resume":True,"disable_all":True,"closed_windows_removed":True,
-        "hdr_grayed_on_sdr":not state()["hdr_available"],"sdr_hdr_look_optional":True}
+        "hdr_grayed_on_sdr":not state()["hdr_available"],"sdr_hdr_look_optional":True,"compression_cleanup_control":True}
     (artifacts/"window-tray-result.json").write_text(json.dumps(result,indent=2)+"\n")
     print(json.dumps(result),flush=True)
 finally:

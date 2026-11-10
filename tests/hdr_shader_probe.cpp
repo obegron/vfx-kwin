@@ -32,7 +32,8 @@ public:
     QOpenGLShaderProgram program;
     GLuint textures[3]{}, fbo = 0, vao = 0;
     std::shared_ptr<ColorDescription> hdr = ColorDescription::BT2020PQ->withHdrMetadata(650, 650);
-    Probe()
+    bool sdrShader;
+    Probe(bool sdr = false) : sdrShader(sdr)
     {
         QSurfaceFormat format;
         format.setRenderableType(QSurfaceFormat::OpenGL);
@@ -42,7 +43,11 @@ public:
         require(context.create(), "GL context creation failed");
         surface.setFormat(context.format()); surface.create();
         require(context.makeCurrent(&surface) && initializeOpenGLFunctions(), "GL context activation failed");
-        QByteArray fragment = resource(":/kwin-vfx/enhance-hdr.frag");
+        QByteArray fragment = resource(sdrShader ? ":/kwin-vfx/enhance.frag" : ":/kwin-vfx/enhance-hdr.frag");
+        if (sdrShader) {
+            fragment.replace("#include \"kwin-vfx/filter.glsl\"",resource(":/opengl/kwin-vfx/filter.glsl"));
+            fragment.replace("#include \"kwin-vfx/cas.glsl\"",resource(":/opengl/kwin-vfx/cas.glsl"));
+        }
         // Qt's shader wrapper detects #version only at the start (KWin's own
         // loader handles the preceding SPDX comment itself).
         fragment = fragment.mid(fragment.indexOf("#version"));
@@ -78,12 +83,14 @@ void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); texcoord0 
         program.setUniformValue("saturation", 1.0f);
         program.setUniformValue("primaryBrightness", QVector3D(0.2627f,0.6780f,0.0593f));
         program.setUniformValue("texelSize", QVector2D(1,1));
-        program.setUniformValue("colorimetryTransform", hdr->toOther(*hdr, RenderingIntent::Perceptual));
-        program.setUniformValue("sourceNamedTransferFunction", int(TransferFunction::PerceptualQuantizer));
+        const auto source = sdrShader ? ColorDescription::sRGB : hdr;
+        program.setUniformValue("colorimetryTransform", source->toOther(*hdr, RenderingIntent::Perceptual));
+        program.setUniformValue("sourceNamedTransferFunction", int(source->transferFunction().type));
         program.setUniformValue("destinationNamedTransferFunction", int(TransferFunction::PerceptualQuantizer));
-        program.setUniformValue("sourceTransferFunctionParams", QVector2D(0,10000));
+        const auto sourceTf=source->transferFunction();
+        program.setUniformValue("sourceTransferFunctionParams", QVector2D(sourceTf.minLuminance,sourceTf.maxLuminance-sourceTf.minLuminance));
         program.setUniformValue("destinationTransferFunctionParams", QVector2D(0,10000));
-        program.setUniformValue("sourceReferenceLuminance", float(hdr->referenceLuminance()));
+        program.setUniformValue("sourceReferenceLuminance", float(source->referenceLuminance()));
         program.setUniformValue("destinationReferenceLuminance", float(hdr->referenceLuminance()));
         program.setUniformValue("maxTonemappingLuminance", 650.0f);
         program.setUniformValue("maxDestinationLuminance", 650.0f);
@@ -92,11 +99,15 @@ void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); texcoord0 
         program.setUniformValue("originalToDestination", ColorDescription::sRGB->toOther(*hdr, RenderingIntent::Perceptual));
         const auto tf = ColorDescription::sRGB->transferFunction();
         program.setUniformValue("originalTransferParams", QVector2D(tf.minLuminance, tf.maxLuminance-tf.minLuminance));
+        if (sdrShader) {
+            program.setUniformValue("aiTexelSize",QVector2D(1,1));
+            program.setUniformValue("aiSharpenStrength",1.0f);
+        }
     }
-    ~Probe() { glDeleteFramebuffers(1,&fbo); glDeleteTextures(3,textures); glDeleteVertexArrays(1,&vao); }
+    ~Probe() { context.makeCurrent(&surface); glDeleteFramebuffers(1,&fbo); glDeleteTextures(3,textures); glDeleteVertexArrays(1,&vao); }
     std::array<float,4> render(float alpha, float strength, float nits, float grain=0, int frame=0)
     {
-        const float pq = hdr->transferFunction().whiteNitsToEncoded(nits);
+        const float pq = sdrShader ? 0.5f : hdr->transferFunction().whiteNitsToEncoded(nits);
         const float original[4]{0.5f*alpha,0.5f*alpha,0.5f*alpha,alpha}, ai[4]{pq,pq,pq,1};
         for (int i=0;i<2;++i) {
             glActiveTexture(GL_TEXTURE0+i); glBindTexture(GL_TEXTURE_2D,textures[i]);
@@ -134,8 +145,24 @@ int main(int argc,char **argv)
         const auto a=p.render(1,1,200,1,0),b=p.render(1,1,200,1,1);
         require(a[0]!=b[0] && a[3]==b[3],"HDR grain did not animate or changed alpha");
         require(p.render(1,1,200)==p.render(1,1,200),"Grain off is unstable");
+        {
+            Probe sdr(true);
+            const auto expectedColor=ColorDescription::sRGB->mapTo(QVector3D(.5f,.5f,.5f),*sdr.hdr,RenderingIntent::Perceptual);
+            for (int mode : {1,2,3}) for (float alpha : {1.0f,0.5f,0.02f,0.0f}) {
+                sdr.program.setUniformValue("filterMode",mode);
+                const auto out=sdr.render(alpha,1,200);
+                require(std::abs(out[3]-alpha)<0.00001f,"SDR enhancement on HDR changed alpha");
+                for (int c=0;c<3;++c) {
+                    if (std::abs(out[c]-expectedColor[c]*alpha)>=0.0001f)
+                        std::cerr << "mode=" << mode << " alpha=" << alpha << " channel=" << c << " output=" << out[c]
+                                  << " expected=" << expectedColor[c]*alpha << '\n';
+                    require(std::abs(out[c]-expectedColor[c]*alpha)<0.0001f,"SDR enhancement on HDR differs from CPU color reference");
+                }
+            }
+        }
         const QJsonObject result{{"passed",true},{"actual_effect_shader",true},{"target","BT.2020 PQ RGBA32F"},
-            {"highlight_nits",peakNits},{"linear_nits_blend",true},{"alpha_preserved",true},{"grain_animates",true}};
+            {"highlight_nits",peakNits},{"linear_nits_blend",true},{"alpha_preserved",true},{"grain_animates",true},
+            {"sdr_enhancement_on_hdr_without_truehdr",true}};
         const auto data=QJsonDocument(result).toJson(); std::cout<<data.constData();
         const int i=app.arguments().indexOf("--output");
         if(i>=0) { require(i+1<argc,"Missing output path"); QFile file(app.arguments()[i+1]); require(file.open(QIODevice::WriteOnly),"Cannot write result"); file.write(data); }

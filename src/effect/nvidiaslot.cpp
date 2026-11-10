@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "nvidiaslot.h"
 #include "../backends/nvidia/vfx_worker.h"
+#include "../backends/nvidia/frame_limits.h"
 #include <opengl/glutils.h>
 #include <QScopeGuard>
 #include <QJsonArray>
@@ -10,8 +11,7 @@ namespace KWin {
 NvidiaSlot::NvidiaSlot(const QString &runtime, QSize size, unsigned mode, bool trueHdr, bool restoration, unsigned peakNits)
     : m_size(size), m_mode(mode), m_trueHdr(trueHdr), m_restoration(restoration), m_peakNits(peakNits)
 {
-    if (size.isEmpty() || size.width() > 3840 || size.height() > 2160)
-        throw std::runtime_error("NVIDIA input exceeds experimental size limit");
+    VfxNvidia::validateFrameSize(size);
     GLint maximum = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
     if (size.width() > maximum || size.height() > maximum)

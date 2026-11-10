@@ -39,6 +39,13 @@ if [[ "$nvidia" == OFF && ( -n "$wheel_file" || "$download_runtime" == 1 ) ]]; t
     printf 'Runtime options require the NVIDIA build.\n' >&2; exit 2
 fi
 install_prefix=$(realpath -m "$install_prefix")
+if [[ -z "$stage_dir" ]] && command -v pacman >/dev/null 2>&1; then
+    if pacman -Qq kwin-vfx-nvidia >/dev/null 2>&1 || pacman -Qq kwin-vfx >/dev/null 2>&1; then
+        printf 'A pacman-managed KWin VFX package is installed. Choose either the package or user installation.\n' >&2
+        printf 'Remove that package before using the user installer; see docs/packaging.md. No files were changed.\n' >&2
+        exit 1
+    fi
+fi
 cmake -S "$project_root" -B "$build_dir" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX="$install_prefix" \
     -DKDE_INSTALL_PLUGINDIR=lib/kwin-vfx/plugins \

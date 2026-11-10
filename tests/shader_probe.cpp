@@ -42,15 +42,21 @@ public:
         require(filter.open(QIODevice::ReadOnly), "Missing shared filter resource");
         QFile cas(QStringLiteral(":/opengl/kwin-vfx/cas.glsl"));
         require(cas.open(QIODevice::ReadOnly), "Missing CAS resource");
-        const QByteArray fragment = QByteArrayLiteral("#version 330 core\n") + filter.readAll() + cas.readAll() + R"(
+        QFile cleanup(QStringLiteral(":/opengl/kwin-vfx/compression.glsl"));
+        require(cleanup.open(QIODevice::ReadOnly), "Missing compression cleanup resource");
+        const QByteArray fragment = QByteArrayLiteral("#version 330 core\n") + filter.readAll() + cas.readAll() + cleanup.readAll() + R"(
 uniform sampler2D image;
 uniform vec2 texel;
 uniform float denoise;
 uniform float sharpen;
 uniform int filterType;
+uniform float pixelScale;
 in vec2 uv;
 out vec4 color;
-void main() { color = filterType == 1 ? casSharpen(image, uv, texel, sharpen) : enhanceWindow(image, uv, texel, denoise, sharpen); }
+void main() {
+    color = filterType == 2 ? cleanupCompression(image, uv, texel, denoise, pixelScale)
+        : filterType == 1 ? casSharpen(image, uv, texel, sharpen) : enhanceWindow(image, uv, texel, denoise, sharpen);
+}
 )";
         require(program.addShaderFromSourceCode(QOpenGLShader::Vertex, R"(#version 330 core
 out vec2 uv;
@@ -128,6 +134,27 @@ void main() {
     {
         program.setUniformValue("filterType", 1);
         const auto result = render(image, 0, strength);
+        program.setUniformValue("filterType", 0);
+        return result;
+    }
+
+    QImage renderCleanup(const QImage &image, float strength, float scale = 1)
+    {
+        program.setUniformValue("filterType", 2);
+        program.setUniformValue("pixelScale", scale);
+        const auto result = render(image, strength, 0);
+        program.setUniformValue("filterType", 0);
+        return result;
+    }
+
+    QJsonObject benchmarkCleanup(const QImage &image)
+    {
+        program.setUniformValue("filterType", 2);
+        program.setUniformValue("pixelScale", 1.3f);
+        auto result = benchmark(image, 0.75f, 0);
+        result.insert("filter", "compression_cleanup");
+        result.insert("strength", result.take("denoise"));
+        result.remove("sharpen");
         program.setUniformValue("filterType", 0);
         return result;
     }
@@ -288,6 +315,61 @@ int main(int argc, char **argv)
             {"soft_edge_contrast_after", after}};
         result.insert("cas_correctness_passed", true);
         result.insert("cas_soft_edge_contrast_after", casContrast);
+        QJsonArray cleanupCases;
+        for (int block : {4, 8, 16}) for (float scale : {1.0f, 1.3f, 1.75f}) {
+            QImage blocks(128, 96, QImage::Format_RGBA8888);
+            for (int y = 0; y < blocks.height(); ++y) for (int x = 0; x < blocks.width(); ++x) {
+                int value = x < 64 ? 20 : 180;
+                value += (((x + 3) / block + (y + 1) / block) % 2) ? 4 : -4;
+                blocks.setPixelColor(x, y, QColor(value, value, value));
+            }
+            require(probe.renderCleanup(blocks, 0, scale) == blocks, "Cleanup off did not bypass exactly");
+            const auto clean = probe.renderCleanup(blocks, 1, scale);
+            double before = 0, after = 0;
+            int samples = 0;
+            for (int x = 8; x < 56; ++x) if ((x + 3) % block == 0) {
+                for (int y = 8; y < 88; ++y) {
+                    before += std::abs(blocks.pixelColor(x,y).red() - blocks.pixelColor(x-1,y).red());
+                    after += std::abs(clean.pixelColor(x,y).red() - clean.pixelColor(x-1,y).red());
+                    ++samples;
+                }
+            }
+            require(samples > 0 && after < before * 0.8, "Cleanup did not reduce dark block boundaries");
+            for (int y = 0; y < blocks.height(); ++y) {
+                require(clean.pixelColor(63,y) == blocks.pixelColor(63,y)
+                    && clean.pixelColor(64,y) == blocks.pixelColor(64,y), "Cleanup blurred the strong silhouette edge");
+                for (int x = 68; x < blocks.width(); ++x)
+                    require(clean.pixelColor(x,y) == blocks.pixelColor(x,y), "Cleanup changed bright texture");
+            }
+            cleanupCases.append(QJsonObject{{"block_size", block}, {"scale", scale}, {"boundary_ratio", after / before}});
+        }
+        require(probe.renderCleanup(flat, 1) == flat, "Cleanup changed a solid fill or border");
+        const auto cleanupAlpha = probe.renderCleanup(alpha, 1);
+        for (int y = 0; y < alpha.height(); ++y) for (int x = 0; x < alpha.width(); ++x) {
+            const auto p = cleanupAlpha.pixelColor(x,y);
+            require(p.alpha() == alpha.pixelColor(x,y).alpha(), "Cleanup changed alpha");
+            require(p.red() <= p.alpha() && p.green() <= p.alpha() && p.blue() <= p.alpha(), "Cleanup broke premultiplied alpha");
+        }
+        result.insert("compression_cleanup_correctness_passed", true);
+        result.insert("compression_cleanup", cleanupCases);
+        const int cleanupInput = app.arguments().indexOf(QStringLiteral("--cleanup-input"));
+        if (cleanupInput >= 0) {
+            const int cleanupOutput = app.arguments().indexOf(QStringLiteral("--cleanup-image"));
+            require(cleanupInput + 1 < argc && cleanupOutput >= 0 && cleanupOutput + 1 < argc, "Missing cleanup input/output path");
+            QImage example(app.arguments()[cleanupInput + 1]);
+            require(!example.isNull(), "Cannot load cleanup example");
+            require(probe.renderCleanup(example.convertToFormat(QImage::Format_RGBA8888), 0.75f)
+                .save(app.arguments()[cleanupOutput + 1]), "Cannot save cleanup example");
+        }
+        if (app.arguments().contains(QStringLiteral("--benchmark-cleanup"))) {
+            QJsonArray cases;
+            for (QSize size : {QSize(1920, 1080), QSize(3840, 2160)}) {
+                QImage frame(size, QImage::Format_RGBA8888);
+                frame.fill(QColor(24, 24, 24));
+                cases.append(probe.benchmarkCleanup(frame));
+            }
+            result.insert("cleanup_benchmark", cases);
+        }
         if (app.arguments().contains(QStringLiteral("--benchmark"))) {
             QJsonArray cases;
             for (QSize size : {QSize(1920, 1080), QSize(3840, 2160)}) {

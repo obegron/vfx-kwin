@@ -60,6 +60,9 @@ try:
         result = {"passed": True, "failure_original": True, "diagnostic": state["nvidia_error"]}
     else:
         state = wait_for(lambda d: d["nvidia_draws"] > 0)
+        if os.environ.get("KWIN_VFX_REQUIRE_HDR_TARGET"):
+            assert state["hdr_output_seen"] and not state["true_hdr"],state
+        hdr_target_seen=state["hdr_output_seen"]
         filtered = screenshot("nvidia-completed")
         before = ImageStat.Stat(crop(baseline, target)).var[0]
         after = ImageStat.Stat(crop(filtered, target)).var[0]
@@ -119,7 +122,7 @@ try:
             assert effects.loadEffect("kwin_vfx")
         result = {"passed": True, "variance_before": before, "variance_after": after,
                   "strength_zero": True, "resize": True, "two_windows": True, "reload_cycles": 3,
-                  "mode_switches": mode_switches}
+                  "mode_switches": mode_switches,"hdr_target_seen":hdr_target_seen}
     result["native_size"] = baseline.size
     result["scale"] = baseline.info["scale"]
     (artifacts / "nvidia-result.json").write_text(json.dumps(result, indent=2) + "\n")

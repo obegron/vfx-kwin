@@ -15,11 +15,25 @@ lock-screen surfaces are excluded.
 **Meta+Ctrl+E** toggles the focused window. **Meta+Ctrl+PageUp/PageDown** adjusts
 strength. Shortcuts can be rebound through Plasma's shortcut settings.
 
-Mode, CAS, film grain and strength apply to all checked windows. **Pause all
+Mode, compression cleanup, CAS, film grain and strength apply to all checked windows. **Pause all
 enhancements** retains selections; **Resume checked windows** resumes them.
 **Disable all windows** clears selection. Selecting another window while paused
 resumes processing. The unload/enable actions unload or load the effect for the
 session. Quitting the tray clears selections first.
+
+## Compression cleanup
+
+**Compression cleanup** smooths block boundaries in dark, low-contrast areas
+before sharpening and AI processing. It works with shader-only modes, NVIDIA
+denoise/deblur and TrueHDR. It starts **Off**; try **25%** or **50%** and compare
+against Off on the same paused frame. The global Strength control also scales
+cleanup, and Pause bypasses it completely.
+
+The filter favors shadows and preserves strong edges and alpha. Higher settings
+also soften low-contrast detail, including dark application UI because the
+entire selected window is processed. It does not recover detail missing from
+the compressed source. Grain can mask artifacts, while strong sharpening may
+make them easier to see.
 
 ## HDR and SDR
 
@@ -33,8 +47,10 @@ output to SDR. This changes contrast/color on SDR screens; it does not add HDR
 display capability. Both options require the NVIDIA runtime/backend.
 
 A window's main output selects the pipeline. Native HDR source windows bypass
-SDR enhancement. Mixed-output visual validation remains limited. Filter order
-is CAS → optional Deblur/Denoise → TrueHDR → grain → display encoding.
+SDR enhancement. SDR windows can use CAS, denoise and deblur on an HDR display
+with TrueHDR switched off; the final shader converts into the display encoding.
+Mixed-output visual validation remains limited. Filter order
+is optional compression cleanup → CAS → optional Deblur/Denoise → TrueHDR → grain → display encoding.
 Grain covers the entire selected window and may appear stronger through the
 HDR-derived path; adjust its strength to suit the content.
 

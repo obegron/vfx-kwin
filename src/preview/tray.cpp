@@ -79,6 +79,21 @@ public:
             QObject::connect(action, &QAction::triggered, this, [this, mode] { setMode(mode); });
             modes.append(action);
         }
+        auto *cleanupMenu = menu.addMenu("Compression cleanup");
+        cleanupMenu->setToolTip("Smooth blocky shadows before sharpening and AI processing. Stronger settings soften low-contrast detail.");
+        auto *cleanupGroup = new QActionGroup(this);
+        for (int percent : {0, 25, 50, 75, 100}) {
+            auto *action = cleanupMenu->addAction(percent == 0 ? "Off" : QString::number(percent) + "%");
+            action->setCheckable(true); action->setData(percent); cleanupGroup->addAction(action);
+            QObject::connect(action, &QAction::triggered, this, [this, percent] {
+                QSettings config(configPath, QSettings::IniFormat);
+                config.setValue("Effect-kwin_vfx/CompressionCleanup", percent / 100.0); config.sync();
+                QDBusInterface effect("org.kde.KWin", "/Effects", "org.kde.kwin.Effects", bus);
+                effect.call("reconfigureEffect", "kwin_vfx");
+                QTimer::singleShot(100, this, [this] { refresh(); });
+            });
+            cleanups.append(action);
+        }
         auto *sharpenMenu = menu.addMenu("CAS sharpening");
         auto *sharpenGroup = new QActionGroup(this);
         for (int percent : {0, 25, 50, 75, 100}) {
@@ -151,6 +166,7 @@ private:
     QList<QAction *> modes;
     QList<QAction *> sharpens;
     QList<QAction *> grains;
+    QList<QAction *> cleanups;
     int lastNonzero = 60;
     bool wasEnabled = false, seenOutput = false, closing = false;
     double baselineDraws = 0;
@@ -205,6 +221,10 @@ private:
                 action->setChecked(action->data().toInt() == qRound(current["cas_strength"].toDouble() * 100));
                 action->setEnabled(current.contains("cas_strength"));
             }
+            for (auto *action : cleanups) {
+                action->setChecked(action->data().toInt() == qRound(current["compression_cleanup"].toDouble() * 100));
+                action->setEnabled(current.contains("compression_cleanup"));
+            }
             const bool active = selected > 0 && current["processing"].toBool();
             const int pipeline = mode + (trueHdr ? 100 : 0) + (current["cas_only"].toBool() ? 1000 : 0);
             if (pipeline != previousMode) { seenOutput = false; wasEnabled = false; previousMode = pipeline; }
@@ -222,7 +242,8 @@ private:
                     if (job.toObject()["state"].toInt() == 4 && job.toObject()["mode"].toInt(-1) == mode
                         && job.toObject()["true_hdr"].toBool() == trueHdr) seenOutput = true;
             }
-            const QString error = current["nvidia_error"].toString();
+            const QString error = current["processing_error"].toString().isEmpty()
+                ? current["nvidia_error"].toString() : current["processing_error"].toString();
             const bool nvidia = current["backend"].toString() == "nvidia-experimental";
             const bool cas = current["cas_only"].toBool() && !trueHdr;
             const QString base = current["cas_only"].toBool() ? "CAS" : mode >= 12 ? "Deblur" : "Video denoise";
@@ -235,6 +256,8 @@ private:
                 detail += "\nCAS sharpening: " + QString::number(qRound(current["cas_strength"].toDouble() * 100)) + "%";
             if (current["film_grain"].toDouble() > 0)
                 detail += "\nFilm grain: " + QString::number(qRound(current["film_grain"].toDouble() * 100)) + "%";
+            if (current["compression_cleanup"].toDouble() > 0)
+                detail += "\nCompression cleanup: " + QString::number(qRound(current["compression_cleanup"].toDouble() * 100)) + "%";
             if (trueHdr) {
                 detail += "\nTrueHDR target: " + QString::number(current["hdr_peak_nits"].toInt()) + " nits";
                 if (!hdrOutput) detail += "\nSDR tone mapping — HDR output is not enabled";

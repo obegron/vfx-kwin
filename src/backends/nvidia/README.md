@@ -26,3 +26,10 @@ validation; they are not part of the compositor rendering path. Build them with
 `KWIN_VFX_BUILD_NVIDIA_PROBES=ON`.
 
 Without `KWIN_VFX_BUILD_NVIDIA_BACKEND=ON`, the effect links neither CUDA nor VFX.
+
+The application allocation budget permits up to 16,777,216 pixels per window,
+with at most 8192 pixels on either edge; actual GPU texture limits also apply.
+This accommodates decorations/shadows around UHD windows and portrait layouts.
+It is a memory guard, not a guarantee that every size is supported by every SDK
+mode or runs within a frame deadline. SDK/allocation errors still restore normal
+rendering. Larger captures increase GPU memory use and inference time.
