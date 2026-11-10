@@ -54,7 +54,12 @@ changes. Repaints of unchanged content (grain animation, other outputs,
 overlapping windows) draw that texture with grain and color conversion only.
 Strength zero permits passthrough without capture work when no other
 processing is needed. Shader/allocation failures drop the selection
-and restore ordinary rendering where the GL context remains usable.
+and restore ordinary rendering where the GL context remains usable. NVIDIA
+worker failures instead keep the selection on the shader path; the next
+settings change retries the AI stage.
+
+A window spanning outputs with different scales is captured once at the
+densest output's scale rather than reallocated for each output's draw.
 
 ## NVIDIA ownership and synchronization
 
@@ -80,7 +85,10 @@ but still involves GPU copies and format conversions.
 A completed result more than one capture revision behind is rejected in favor
 of the shader/original path, avoiding blending widely separated motion frames.
 This can reduce the visible AI contribution when inference is slower than
-content updates. It is not a guarantee of a frame deadline.
+content updates. After three consecutive stale results the window stops
+submitting for 250 ms, doubling up to 4 s while results stay stale, because
+those results would be discarded anyway. Static content gets a fresh
+submission when the backoff expires. It is not a guarantee of a frame deadline.
 
 Size must remain stable for approximately 200 ms before a new worker is created.
 Disable, failure and resize request worker shutdown and defer destruction until

@@ -145,8 +145,12 @@ public:
         QObject::connect(&tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
             if (reason == QSystemTrayIcon::Trigger) menu.popup(QCursor::pos());
         });
+        // Each poll is a synchronous call on KWin's compositor thread. Poll fast
+        // only while the menu is open or the status is changing.
+        QObject::connect(&menu, &QMenu::aboutToShow, this, [this] { menuOpen = true; refresh(); });
+        QObject::connect(&menu, &QMenu::aboutToHide, this, [this] { menuOpen = false; refresh(); });
         QObject::connect(&timer, &QTimer::timeout, this, [this] { refresh(); });
-        timer.start(250); refresh(); tray.show();
+        timer.start(FastPollMs); refresh(); tray.show();
         tray.showMessage("Window enhancement controls", "Check windows in the Windows menu to enhance them. Mode, HDR, CAS, grain and strength apply to all checked windows.", QSystemTrayIcon::Information, 5000);
     }
 private:
@@ -159,6 +163,8 @@ private:
     QSystemTrayIcon tray;
     QMenu menu;
     QTimer timer;
+    static constexpr int FastPollMs = 250, IdlePollMs = 3000;
+    bool menuOpen = false;
     QAction *header = nullptr, *enable = nullptr, *disable = nullptr;
     QAction *hdr = nullptr;
     QAction *sdrHdr = nullptr;
@@ -201,7 +207,8 @@ private:
         try {
             const auto current = state();
             load->setEnabled(false);
-            refreshWindows();
+            // The window list is only visible inside the menu.
+            if (menuOpen || windows.isEmpty()) refreshWindows();
             const int percent = qRound(current["strength"].toDouble() * 100);
             const int selected = current["selected"].toInt();
             const int mode = current["nvidia_mode"].toInt(8);
@@ -264,6 +271,8 @@ private:
             }
             display(text, !active ? QColor("#a94141") : nvidia && !seenOutput ? QColor("#bb8120") : QColor("#23834b"), detail);
             enable->setEnabled(selected > 0 && !active); disable->setEnabled(active);
+            const bool changing = active && nvidia && !seenOutput;
+            timer.setInterval(menuOpen || changing ? FastPollMs : IdlePollMs);
         } catch (const std::exception &error) {
             display(desktop ? "Effect unloaded / unavailable" : "Preview closed / unavailable", QColor("#666666"), QString::fromUtf8(error.what()));
             load->setEnabled(true); windowMenu->setEnabled(false);

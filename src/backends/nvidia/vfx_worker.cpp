@@ -167,8 +167,11 @@ void Worker::run()
         check(cuDevicePrimaryCtxRetain(&r.cuda, r.device), "retain CUDA primary context");
         check(cuCtxPushCurrent(r.cuda), "activate CUDA context");
         r.pushed = true;
-        // Stream 0 is the verified SDK ordering path. It is used only here on
-        // the worker; no CUDA synchronization runs on the rendering thread.
+        // Stream 0 is the verified SDK ordering path. A private
+        // CU_STREAM_NON_BLOCKING stream was tried and produced unwritten
+        // output inside KWin (the SDK relies on legacy default-stream
+        // ordering). It is used only here on the worker; no CUDA
+        // synchronization runs on the rendering thread.
         check(cuEventCreate(&r.done, CU_EVENT_DISABLE_TIMING), "create worker completion event");
         if (m_gpuTiming) {
             check(cuEventCreate(&r.sdkBegin, CU_EVENT_DEFAULT), "create SDK timing begin");

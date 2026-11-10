@@ -116,6 +116,11 @@ struct WindowEnhancementEffect::WindowState
     uint64_t lastRevisionGap = 0;
     bool itemTreeDirty = true;
     bool awaitingAi = false;
+    // An NVIDIA failure keeps the selection on the shader path until settings change.
+    bool nvidiaFailed = false;
+    // Consecutive AI results discarded as stale; drives submission backoff.
+    unsigned staleStreak = 0;
+    std::chrono::steady_clock::time_point aiResumeAt;
     bool hdrEnabled = false;
     std::chrono::steady_clock::time_point aiStableAt;
 #ifdef KWIN_VFX_NVIDIA_BACKEND
@@ -155,10 +160,12 @@ WindowEnhancementEffect::WindowEnhancementEffect()
     }
 #endif
     // Fires once at the earliest resize-stability deadline of a waiting window.
-    m_aiStableTimer.setSingleShot(true);
-    connect(&m_aiStableTimer, &QTimer::timeout, this, [this] {
+    m_aiWakeTimer.setSingleShot(true);
+    connect(&m_aiWakeTimer, &QTimer::timeout, this, [this] {
+#ifdef KWIN_VFX_NVIDIA_BACKEND
         for (auto &[window, state] : m_windows)
-            if (state->awaitingAi) window->addRepaintFull();
+            if (state->awaitingAi || state->nvidia) window->addRepaintFull();
+#endif
     });
     if (qEnvironmentVariableIsSet("KWIN_VFX_PROFILE")) m_profile = std::make_unique<RenderProfile>();
     auto *action = new QAction(this);
@@ -258,7 +265,7 @@ void WindowEnhancementEffect::updateHdrAvailability()
 void WindowEnhancementEffect::updateRedirects()
 {
     const bool enabled = processingEnabled();
-    if (!enabled) m_aiStableTimer.stop();
+    if (!enabled) m_aiWakeTimer.stop();
     if (enabled && m_grain > 0 && !m_windows.empty() && !effects->isScreenLocked()) m_grainTimer.start();
     else m_grainTimer.stop();
     for (auto &[window, state] : m_windows) {
@@ -316,6 +323,8 @@ void WindowEnhancementEffect::reconfigure(ReconfigureFlags)
     // too when changing from an SDK pipeline to plain CAS/passthrough.
     if (!usingNvidia())
         for (auto &[window, state] : m_windows) retireSlot(*state);
+    // Any settings change retries NVIDIA on windows that fell back to shaders.
+    for (auto &[window, state] : m_windows) state->nvidiaFailed = false;
     updateHdrAvailability();
     qCInfo(KWIN_VFX) << "Settings: strength" << m_strength << "denoise" << m_denoise << "sharpen" << m_sharpen;
 }
@@ -391,6 +400,8 @@ QString WindowEnhancementEffect::debug(const QString &parameter) const
         result.insert("windows", windows);
     }
     result.insert("stale_ai_outputs", double(m_staleAiOutputs));
+    result.insert("ai_backoffs", double(m_aiBackoffs));
+    result.insert("nvidia_fallbacks", double(m_nvidiaFallbacks));
     result.insert("ai_slot_starts", double(m_aiSlotStarts));
 #ifdef KWIN_VFX_NVIDIA_BACKEND
     result.insert("retiring_ai_slots", int(m_retiredSlots.size()));
@@ -409,6 +420,7 @@ QString WindowEnhancementEffect::debug(const QString &parameter) const
             auto job = state->nvidia->debug();
             job.insert("capture_revision", double(state->revision));
             job.insert("last_result_revision_gap", double(state->lastRevisionGap));
+            job.insert("stale_streak", int(state->staleStreak));
             jobs.append(job);
         }
     }
@@ -549,7 +561,7 @@ void WindowEnhancementEffect::disableWindow(EffectWindow *window)
     m_windows.erase(window);
     retireSlot(*state);
     if (m_windows.empty()) {
-        m_aiStableTimer.stop();
+        m_aiWakeTimer.stop();
         m_grainTimer.stop();
     }
     if (!effects->makeOpenGLContextCurrent()) {
@@ -622,6 +634,20 @@ void WindowEnhancementEffect::watchItems(EffectWindow *window, WindowState &stat
     for (Item *child : item->childItems()) watchItems(window, state, child, false);
 }
 
+// Capture once at the densest output the window touches. Using each draw's
+// viewport scale would reallocate and recapture on every frame for a window
+// spanning outputs with different scales (and keep the AI slot from starting).
+static qreal captureScale(const EffectWindow *window, qreal viewportScale)
+{
+    const RectF geometry = window->expandedGeometry();
+    qreal scale = 0;
+    for (const auto *output : effects->screens()) {
+        if (output->geometryF().intersects(geometry)) scale = std::max(scale, output->scale());
+    }
+    // Offscreen renders (e.g. screenshots) may request a denser viewport.
+    return std::max(scale, viewportScale);
+}
+
 bool WindowEnhancementEffect::capture(WindowState &state, EffectWindow *window, const RenderViewport &viewport)
 {
     state.captured = false;
@@ -631,7 +657,7 @@ bool WindowEnhancementEffect::capture(WindowState &state, EffectWindow *window, 
         watchItems(window, state, window->windowItem());
         state.itemTreeDirty = false;
     }
-    const qreal scale = viewport.scale();
+    const qreal scale = captureScale(window, viewport.scale());
     const RectF logicalGeometry = snapToPixels(window->expandedGeometry(), scale);
     const QSize size = (logicalGeometry.size() * scale).toSize();
     if (size.isEmpty() || m_testFailure == "allocation") {
@@ -819,55 +845,78 @@ void WindowEnhancementEffect::nvidiaProgress()
 void WindowEnhancementEffect::scheduleAiWake(std::chrono::steady_clock::duration delay)
 {
     const int ms = int(std::chrono::ceil<std::chrono::milliseconds>(delay).count()) + 1;
-    if (!m_aiStableTimer.isActive() || m_aiStableTimer.remainingTime() > ms) m_aiStableTimer.start(ms);
+    if (!m_aiWakeTimer.isActive() || m_aiWakeTimer.remainingTime() > ms) m_aiWakeTimer.start(ms);
 }
 
 bool WindowEnhancementEffect::paint(WindowState &state, const RenderTarget &target,
     const RenderViewport &viewport, EffectWindow *window, const Region &region, const WindowPaintData &data)
 {
     const bool hdrEnabled = state.hdrEnabled;
-    const bool nvidia = !m_nvidiaRoot.isEmpty() && (!m_casOnly || hdrEnabled);
+    bool nvidia = !m_nvidiaRoot.isEmpty() && (!m_casOnly || hdrEnabled) && !state.nvidiaFailed;
     GLTexture *aiOutput = nullptr;
+    [[maybe_unused]] const auto now = std::chrono::steady_clock::now();
 #ifdef KWIN_VFX_NVIDIA_BACKEND
+    // Losing the AI stage keeps the window selected on the shader path.
+    const auto fallBack = [&](const QString &error) {
+        m_nvidiaError = error;
+        qCWarning(KWIN_VFX) << "NVIDIA processing failed, using shader fallback:" << error;
+        state.nvidiaFailed = true;
+        retireSlot(state);
+        ++m_nvidiaFallbacks;
+        nvidia = false;
+        aiOutput = nullptr;
+    };
     if (nvidia && !m_testTint) {
         if (state.nvidia && !state.nvidia->matches(state.size, m_nvidiaMode, hdrEnabled, !m_casOnly, m_hdrPeakNits)) {
             retireSlot(state);
         }
         state.awaitingAi = false;
         if (!state.nvidia) {
-            const auto now = std::chrono::steady_clock::now();
             if (now >= state.aiStableAt && m_retiredSlots.empty()) {
                 // Worker transitions wake the compositor instead of polling.
                 const auto notify = [this] {
                     if (!m_nvidiaEventQueued.exchange(true))
                         QMetaObject::invokeMethod(this, &WindowEnhancementEffect::nvidiaProgress, Qt::QueuedConnection);
                 };
-                state.nvidia = std::make_unique<NvidiaSlot>(m_nvidiaRoot, state.size, m_nvidiaMode, hdrEnabled, !m_casOnly,
-                    m_hdrPeakNits, notify);
-                ++m_aiSlotStarts;
+                try {
+                    state.nvidia = std::make_unique<NvidiaSlot>(m_nvidiaRoot, state.size, m_nvidiaMode, hdrEnabled, !m_casOnly,
+                        m_hdrPeakNits, notify);
+                    state.staleStreak = 0;
+                    state.aiResumeAt = {};
+                    ++m_aiSlotStarts;
+                } catch (const std::exception &error) {
+                    fallBack(QString::fromUtf8(error.what()));
+                }
             } else {
                 // Retired slots notify when finished; the resize delay needs a timer.
                 state.awaitingAi = true;
                 if (now < state.aiStableAt) scheduleAiWake(state.aiStableAt - now);
             }
         }
-        if (state.nvidia && !state.nvidia->error().isEmpty()) {
-            const auto error = state.nvidia->error();
-            m_nvidiaError = error;
-            qCWarning(KWIN_VFX) << "NVIDIA processing failed:" << error;
-            return false;
-        }
+        if (state.nvidia && !state.nvidia->error().isEmpty()) fallBack(state.nvidia->error());
         if (state.nvidia) {
             state.nvidia->observe(state.revision);
             aiOutput = state.nvidia->result();
             if (aiOutput) {
-                state.lastRevisionGap = state.revision - state.nvidia->completedRevision();
+                const uint64_t completed = state.nvidia->completedRevision();
+                state.lastRevisionGap = state.revision - completed;
                 if (state.lastRevisionGap > 1) {
-                    if (state.rejectedRevision != state.nvidia->completedRevision()) {
+                    if (state.rejectedRevision != completed) {
                         ++m_staleAiOutputs;
-                        state.rejectedRevision = state.nvidia->completedRevision();
+                        state.rejectedRevision = completed;
+                        // Inference can't keep up with content updates: every
+                        // result would be discarded, so stop spending GPU time
+                        // on it for a while. Static content resumes at once.
+                        if (++state.staleStreak >= 3) {
+                            const auto backoff = std::chrono::milliseconds(250 << std::min(state.staleStreak - 3, 4u));
+                            state.aiResumeAt = now + backoff;
+                            scheduleAiWake(backoff);
+                            ++m_aiBackoffs;
+                        }
                     }
                     aiOutput = nullptr;
+                } else {
+                    state.staleStreak = 0;
                 }
             }
         }
@@ -983,8 +1032,13 @@ bool WindowEnhancementEffect::paint(WindowState &state, const RenderTarget &targ
 #ifdef KWIN_VFX_NVIDIA_BACKEND
     // A fence is created after the draw above, so the worker never overwrites
     // a texture this frame still samples.
-    if (nvidia && state.nvidia && state.nvidia->size() == state.size)
-        state.nvidia->submit(state.texture.get(), state.revision, hdrEnabled ? m_nvidiaSharpen : 0);
+    if (nvidia && state.nvidia && state.nvidia->size() == state.size && now >= state.aiResumeAt) {
+        try {
+            state.nvidia->submit(state.texture.get(), state.revision, hdrEnabled ? m_nvidiaSharpen : 0);
+        } catch (const std::exception &error) {
+            fallBack(QString::fromUtf8(error.what()));
+        }
+    }
 #endif
     return true;
 }

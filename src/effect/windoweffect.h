@@ -77,6 +77,8 @@ private:
     QTimer m_cleanupTimer;
     uint64_t m_staleAiOutputs = 0;
     uint64_t m_aiSlotStarts = 0;
+    uint64_t m_aiBackoffs = 0;
+    uint64_t m_nvidiaFallbacks = 0;
     const QByteArray m_testFailure;
     const bool m_testTint;
     float m_strength = 0.6f;
@@ -105,6 +107,6 @@ private:
     uint64_t m_processDraws = 0;
     // Worker state changes arrive as queued events; this coalesces them.
     std::atomic_bool m_nvidiaEventQueued{false};
-    QTimer m_aiStableTimer;
+    QTimer m_aiWakeTimer; // Resize-stability deadlines and stale-result backoff.
 };
 }

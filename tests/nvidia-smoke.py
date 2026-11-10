@@ -53,11 +53,14 @@ try:
     target = (85, 105, 210, 170)
     control = (545, 105, 670, 170)
     if os.environ.get("KWIN_VFX_TEST_NVIDIA_FAILURE") or os.environ.get("KWIN_VFX_EXPECT_NVIDIA_FAILURE"):
-        state = wait_for(lambda d: d["selected"] == 0 and bool(d["nvidia_error"]))
-        restored = screenshot("nvidia-failure-original")
+        # A worker failure keeps the selection and falls back to the shader
+        # path; with denoise/sharpen at zero that renders the original.
+        state = wait_for(lambda d: d["nvidia_fallbacks"] > 0 and bool(d["nvidia_error"]))
+        assert state["selected"] == 1 and not state["nvidia_jobs"], state
+        restored = screenshot("nvidia-failure-fallback")
         assert difference(baseline, restored, target) == 0
         assert difference(baseline, restored, control) == 0
-        result = {"passed": True, "failure_original": True, "diagnostic": state["nvidia_error"]}
+        result = {"passed": True, "failure_fallback": True, "diagnostic": state["nvidia_error"]}
     else:
         state = wait_for(lambda d: d["nvidia_draws"] > 0)
         if os.environ.get("KWIN_VFX_REQUIRE_HDR_TARGET"):
