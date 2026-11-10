@@ -94,7 +94,7 @@ class RuntimeLicenseTests(unittest.TestCase):
         for arguments in (("--download",), ("official.whl",)):
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
                 destination=Path(directory)/"runtime";cache=Path(directory)/"cache"
-                with mock.patch.object(runtime.sys,"argv",["kwin-vfx-runtime",*arguments,"--output-dir",str(destination),"--cache-dir",str(cache)]), \
+                with mock.patch.object(runtime.sys,"argv",["vfx-kwin-runtime",*arguments,"--output-dir",str(destination),"--cache-dir",str(cache)]), \
                      mock.patch.object(runtime.sys.stdin,"isatty",return_value=False), \
                      mock.patch.object(runtime,"download_wheel") as download, \
                      mock.patch.object(runtime,"install_wheel") as install, \
@@ -115,7 +115,7 @@ class RuntimeLicenseTests(unittest.TestCase):
 
     def test_explicit_flag_or_terminal_yes_allows_install_and_keeps_stdout_json(self):
         for flags,interactive,answer in ((("--accept-license",),False,None),((),True,"yes")):
-            with self.subTest(flags=flags), mock.patch.object(runtime.sys,"argv",["kwin-vfx-runtime","--download",*flags]), \
+            with self.subTest(flags=flags), mock.patch.object(runtime.sys,"argv",["vfx-kwin-runtime","--download",*flags]), \
                  mock.patch.object(runtime.sys.stdin,"isatty",return_value=interactive), \
                  mock.patch("builtins.input",return_value=answer) as prompt, \
                  mock.patch.object(runtime,"download_wheel",return_value=Path("official.whl")) as download, \
@@ -128,7 +128,7 @@ class RuntimeLicenseTests(unittest.TestCase):
             self.assertEqual(prompt.call_count,int(interactive))
 
     def test_status_needs_no_acceptance(self):
-        with mock.patch.object(runtime.sys,"argv",["kwin-vfx-runtime","--status"]), \
+        with mock.patch.object(runtime.sys,"argv",["vfx-kwin-runtime","--status"]), \
              mock.patch.object(runtime,"require_license_acceptance") as acceptance, \
              mock.patch.object(runtime,"runtime_status",return_value={"ready":True}), \
              contextlib.redirect_stdout(io.StringIO()):
@@ -143,7 +143,7 @@ class RuntimeLicenseTests(unittest.TestCase):
             cmake=bin_dir/"cmake"
             cmake.write_text('#!/bin/sh\nif [ "$1" = --install ]; then\nmkdir -p "$DESTDIR$VFX_TEST_INSTALL_PREFIX/share/kwin-vfx"\nprintf "{}\\n" > "$DESTDIR$VFX_TEST_INSTALL_PREFIX/share/kwin-vfx/installation.json"\nfi\nexit 0\n')
             cmake.chmod(0o755);(root/"build").mkdir()
-            command=bin_dir/"kwin-vfx-runtime"
+            command=bin_dir/"vfx-kwin-runtime"
             command.write_text("#!/usr/bin/env python3\nimport json,os,sys\nfrom pathlib import Path\nPath(os.environ['VFX_TEST_ARGUMENTS']).write_text(json.dumps(sys.argv[1:]))\n")
             command.chmod(0o755);record=root/"arguments.json"
             environment=dict(os.environ,PATH=str(bin_dir)+os.pathsep+os.environ["PATH"],VFX_TEST_ARGUMENTS=str(record),VFX_TEST_INSTALL_PREFIX=str(root))
@@ -227,7 +227,7 @@ class UserHookTests(unittest.TestCase):
     def test_hook_command_handles_spaces_without_executing_path_contents(self):
         with tempfile.TemporaryDirectory(prefix="vfx hook ") as directory:
             root=Path(directory);(root/"scripts").mkdir();(root/"packaging/arch").mkdir(parents=True)
-            (root/"packaging/arch/kwin-vfx-user.hook.in").write_text((ROOT/"packaging/arch/kwin-vfx-user.hook.in").read_text())
+            (root/"packaging/arch/vfx-kwin-user.hook.in").write_text((ROOT/"packaging/arch/vfx-kwin-user.hook.in").read_text())
             record=root/"arguments.json"
             (root/"scripts/install-user.sh").write_text("#!/bin/bash\n/usr/bin/python3 -c "+shlex.quote(
                 "import json,os,sys;from pathlib import Path;Path("+repr(str(record))+").write_text(json.dumps({'args':sys.argv[1:],'home':os.environ['HOME']}))")+' "$@"\n')
@@ -243,6 +243,38 @@ class UserHookTests(unittest.TestCase):
 
 
 class DesktopSetupTests(unittest.TestCase):
+    def test_pre_rename_user_installation_migrates_without_losing_the_tray(self):
+        # The pacman hook rebuilds with --no-setup, so the installer itself
+        # must keep the managed autostart working when old commands go away.
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);prefix=root/"prefix";home=root/"config";bindir=prefix/"bin"
+            bindir.mkdir(parents=True);(home/"autostart").mkdir(parents=True)
+            for name in setup.LEGACY_COMMANDS.values():(bindir/name).write_text("new")
+            for name in ("kwin-vfx-tray","kwin-vfx-setup"):(bindir/name).write_text("old")
+            (bindir/"kwin-vfx-runtime").symlink_to(bindir/"vfx-kwin-runtime")
+            old_autostart=home/"autostart/kwin-vfx-tray.desktop"
+            old_autostart.write_text(setup.desktop_entry(bindir/"kwin-vfx-tray"))
+            launcher=prefix/"share/applications/kwin-vfx-tray.desktop";launcher.parent.mkdir(parents=True)
+            launcher.write_text(f'[Desktop Entry]\nExec="{bindir}/kwin-vfx-tray" --desktop\n')
+            (prefix/"share/licenses/kwin-vfx").mkdir(parents=True);(prefix/"share/licenses/vfx-kwin").mkdir()
+            removed=setup.migrate_user_installation(prefix,home)
+            self.assertEqual(sorted(path.name for path in removed),["kwin-vfx-setup","kwin-vfx-tray"])
+            self.assertTrue((bindir/"kwin-vfx-runtime").is_symlink(),"Symlinks are never removed")
+            self.assertFalse(old_autostart.exists())
+            self.assertIn(f'"{bindir}/vfx-kwin-tray"',(home/"autostart/vfx-kwin-tray.desktop").read_text())
+            self.assertFalse(launcher.exists());self.assertFalse((prefix/"share/licenses/kwin-vfx").exists())
+            self.assertEqual(setup.migrate_user_installation(prefix,home),[],"Migration is idempotent")
+
+    def test_migration_keeps_unmanaged_entries_and_commands_without_replacements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);prefix=root/"prefix";home=root/"config";bindir=prefix/"bin"
+            bindir.mkdir(parents=True);(home/"autostart").mkdir(parents=True)
+            (bindir/"kwin-vfx-tray").write_text("old, not yet replaced")
+            custom=home/"autostart/kwin-vfx-tray.desktop";custom.write_text("[Desktop Entry]\nExec=my-own-wrapper\n")
+            self.assertEqual(setup.migrate_user_installation(prefix,home),[])
+            self.assertTrue((bindir/"kwin-vfx-tray").exists());self.assertTrue(custom.exists())
+            self.assertFalse((home/"autostart/vfx-kwin-tray.desktop").exists())
+
     def test_retired_launchers_and_existing_backups_leave_autostart_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);home=root/"config";data=root/"data"
@@ -251,7 +283,7 @@ class DesktopSetupTests(unittest.TestCase):
                    home/"autostart/kwin-vsr-tray.desktop.before-kwin-vfx-20261025-235958",
                    data/"applications/kwin-vsr-tray.desktop"]
             for path in paths:path.parent.mkdir(parents=True,exist_ok=True);path.write_text(legacy)
-            current=home/"autostart/kwin-vfx-tray.desktop";current.write_text("current tray")
+            current=home/"autostart/vfx-kwin-tray.desktop";current.write_text("current tray")
             unrelated=home/"autostart/kwin-vsr-tray.desktop.custom";unrelated.write_text("unrelated application")
             archived=setup.archive_legacy_entries(home,data)
             self.assertEqual(len(archived),len(paths))
@@ -287,11 +319,12 @@ class DesktopSetupTests(unittest.TestCase):
              mock.patch.object(setup,"config_home",return_value=Path(directory)), \
              mock.patch.object(setup,"write_setting") as write, \
              mock.patch.object(setup,"connection",side_effect=ValueError("KWin's session bus is unavailable")):
-            autostart=Path(directory)/"autostart/kwin-vfx-tray.desktop";autostart.parent.mkdir()
-            autostart.write_text("[Desktop Entry]\nX-KWin-VSR-Managed=true\n")
+            autostart=Path(directory)/"autostart/vfx-kwin-tray.desktop";autostart.parent.mkdir()
+            legacy=Path(directory)/"autostart/kwin-vfx-tray.desktop"
+            for path in (autostart,legacy):path.write_text("[Desktop Entry]\nX-KWin-VSR-Managed=true\n")
             message=setup.disable()
             write.assert_called_once_with("Plugins","kwin_vfxEnabled","false")
-            self.assertFalse(autostart.exists())
+            self.assertFalse(autostart.exists());self.assertFalse(legacy.exists())
             self.assertIn("next login",message)
 
     def test_legacy_preferences_migrate_and_existing_vfx_values_win(self):
@@ -362,12 +395,23 @@ package
                     self.assertNotEqual(result.returncode,0)
                     self.assertFalse(marker.exists())
 
+    def test_renamed_packages_replace_their_predecessors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for nvidia,name,old in ((True,"vfx-kwin-nvidia","kwin-vfx-nvidia"),(False,"vfx-kwin","kwin-vfx")):
+                result=package.prepare(ROOT,root/name,nvidia)
+                recipe=(root/name/"PKGBUILD").read_text()
+                self.assertEqual(result["package"],name)
+                self.assertIn(f"pkgname={name}\n",recipe)
+                self.assertIn(f"replaces=('{old}')",recipe)
+                self.assertIn("'kwin-vfx' 'kwin-vfx-nvidia'",recipe)
+
     def test_reproducible_source_only_archives_and_real_checksums(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             first=package.prepare(ROOT,root/"first",True);second=package.prepare(ROOT,root/"second",False)
             self.assertEqual(first["source_sha256"],second["source_sha256"])
-            archive=root/"first"/f"kwin-vfx-{first['version']}.tar.gz"
+            archive=root/"first"/f"vfx-kwin-{first['version']}.tar.gz"
             with tarfile.open(archive) as tar:
                 names=tar.getnames()
                 self.assertTrue(any(name.endswith("vfx_worker.cpp") for name in names))

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Stage a CMake user installation and replace files without truncating mapped libraries."""
 import argparse
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -33,13 +34,21 @@ def install(build_dir, prefix):
                 temporary.unlink(missing_ok=True)
 
 
+def desktop_setup():
+    spec=importlib.util.spec_from_file_location("vfx_desktop_setup",Path(__file__).resolve().parent/"setup-desktop.py")
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir",type=Path,required=True)
     parser.add_argument("--prefix",type=Path,required=True)
     args=parser.parse_args()
     if os.geteuid()==0:parser.error("Run the user installer without sudo")
-    try:install(args.build_dir,args.prefix)
+    try:
+        install(args.build_dir,args.prefix)
+        for path in desktop_setup().migrate_user_installation(args.prefix.resolve()):
+            print(f"Removed pre-rename command {path}")
     except (OSError,ValueError,subprocess.CalledProcessError) as error:parser.exit(1,f"{error}\n")
 
 

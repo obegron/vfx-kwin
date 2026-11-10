@@ -25,13 +25,13 @@ def source_files(root):
 def prepare(root, output, nvidia):
     version=re.search(r"project\(kwin_vfx VERSION ([0-9.]+)", (root/"CMakeLists.txt").read_text()).group(1)
     output.mkdir(parents=True,exist_ok=True)
-    archive=output/f"kwin-vfx-{version}.tar.gz"
+    archive=output/f"vfx-kwin-{version}.tar.gz"
     files=source_files(root)
     epoch=int(os.environ.get("SOURCE_DATE_EPOCH","0"))
     with archive.open("wb") as raw, gzip.GzipFile(fileobj=raw,mode="wb",filename="",mtime=0) as compressed:
         with tarfile.open(fileobj=compressed,mode="w") as tar:
             for path in files:
-                info=tar.gettarinfo(str(path),arcname=f"kwin-vfx-{version}/"+str(path.relative_to(root)))
+                info=tar.gettarinfo(str(path),arcname=f"vfx-kwin-{version}/"+str(path.relative_to(root)))
                 if not info.isfile():raise ValueError(f"Unexpected source type: {path}")
                 info.uid=info.gid=0;info.uname=info.gname="root";info.mtime=epoch
                 info.mode=0o755 if info.mode&0o111 else 0o644
@@ -40,13 +40,15 @@ def prepare(root, output, nvidia):
     recipe=(root/"packaging/arch/PKGBUILD.in").read_text()
     replacements={"@PACKAGE_SUFFIX@":"-nvidia" if nvidia else "", "@NVIDIA_DEPENDENCY@":" 'nvidia-utils'" if nvidia else "",
         "@CUDA_DEPENDENCY@":" 'cuda'" if nvidia else "", "@NVIDIA_OPTION@":"ON" if nvidia else "OFF",
-        "@PACKAGE_RELATIONS@":"provides=('kwin-vfx')\nconflicts=('kwin-vfx' 'kwin-vsr' 'kwin-vsr-nvidia')" if nvidia
-            else "conflicts=('kwin-vfx-nvidia' 'kwin-vsr' 'kwin-vsr-nvidia')",
+        # Packages were named kwin-vfx before the rename; replaces= lets pacman
+        # upgrade an existing installation in place.
+        "@PACKAGE_RELATIONS@":"provides=('vfx-kwin')\nconflicts=('vfx-kwin' 'kwin-vfx' 'kwin-vfx-nvidia' 'kwin-vsr' 'kwin-vsr-nvidia')\nreplaces=('kwin-vfx-nvidia')" if nvidia
+            else "conflicts=('vfx-kwin-nvidia' 'kwin-vfx' 'kwin-vfx-nvidia' 'kwin-vsr' 'kwin-vsr-nvidia')\nreplaces=('kwin-vfx')",
         "@SOURCE_SHA256@":digest}
     for key,value in replacements.items():recipe=recipe.replace(key,value)
     recipe=recipe.replace("pkgver=0.0.1",f"pkgver={version}")
     (output/"PKGBUILD").write_text(recipe)
-    result={"package":"kwin-vfx-nvidia" if nvidia else "kwin-vfx","version":version,"source_sha256":digest,
+    result={"package":"vfx-kwin-nvidia" if nvidia else "vfx-kwin","version":version,"source_sha256":digest,
         "source_files":len(files),"proprietary_runtime_bundled":False,"directory":str(output.resolve())}
     (output/"source-manifest.json").write_text(json.dumps(result,indent=2)+"\n")
     return result

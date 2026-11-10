@@ -1,9 +1,16 @@
 # Packaging VFX for KWin
 
 The native plugin ID is `kwin_vfx`,
-the settings group is `Effect-kwin_vfx`, and commands are `kwin-vfx-tray`,
-`kwin-vfx-setup` and `kwin-vfx-runtime`. The repository is
+the settings group is `Effect-kwin_vfx`, and commands are `vfx-kwin-tray`,
+`vfx-kwin-setup` and `vfx-kwin-runtime`. The repository is
 [obegron/vfx-kwin](https://github.com/obegron/vfx-kwin).
+
+Before the rename, commands were `kwin-vfx-*` and the Arch packages were
+`kwin-vfx` and `kwin-vfx-nvidia`. The new packages replace the old ones. A user
+installation (including a rebuild from the pacman hook) removes the old
+commands and moves the managed tray autostart entry to the new name. A
+hook installed earlier as `/etc/pacman.d/hooks/kwin-vfx.hook` keeps working.
+Internal paths such as `~/.local/lib/kwin-vfx` are unchanged.
 
 The plugin and tray are built from our source. NVIDIA's runtime stays separate:
 the runtime helper obtains a pinned official wheel directly from NVIDIA or uses
@@ -15,21 +22,21 @@ entirely native C++; Python is used only for installation/setup helpers.
 
 Choose this route or the user-only route below. Install only one copy of the
 effect and use its matching setup/tray commands. The personal rebuild hook
-requires the user-only route. `kwin-vfx-setup enable` rejects conflicting system
+requires the user-only route. `vfx-kwin-setup enable` rejects conflicting system
 and user plugin copies rather than silently mixing their startup configuration.
 
 From this checkout:
 
 ```sh
 scripts/build-arch.sh -si
-kwin-vfx-runtime --download
-kwin-vfx-setup enable
-kwin-vfx-tray --desktop
+vfx-kwin-runtime --download
+vfx-kwin-setup enable
+vfx-kwin-tray --desktop
 ```
 
 The first command prepares a source archive from the current working tree,
 generates a SHA256-pinned **PKGBUILD**, and
-runs `makepkg -si`. It builds **kwin-vfx-nvidia**. CUDA is a build dependency;
+runs `makepkg -si`. It builds **vfx-kwin-nvidia**. CUDA is a build dependency;
 the installed package requires the NVIDIA driver libraries, not the full CUDA
 toolkit. The proprietary wheel is not included in source or binary packages.
 The package installs the plugin, tray, launcher, setup/runtime commands and
@@ -40,10 +47,10 @@ For a CUDA/NVIDIA-independent CAS/grain/shader package:
 
 ```sh
 scripts/build-arch.sh --shader-only -si
-kwin-vfx-setup enable
+vfx-kwin-setup enable
 ```
 
-This builds **kwin-vfx**, which conflicts with the NVIDIA variant. Both variants
+This builds **vfx-kwin**, which conflicts with the NVIDIA variant. Both variants
 accept **KWin >=6.8.1 and <6.9** for source builds. CMake records the actual
 installed KWin version, and `package()` uses it for the binary's exact runtime
 dependency (for example, `kwin=6.8.2` when built against 6.8.2). KWin's plugin
@@ -89,7 +96,7 @@ plugin under `~/.local/lib/kwin-vfx/plugins/kwin/effects/plugins`, and desktop
 assets under `~/.local/share`. The default native runtime goes under
 `${XDG_DATA_HOME:-~/.local/share}/kwin-vfx/runtime/nvidia-vfx-0.2.0.0`.
 The download cache is `${XDG_CACHE_HOME:-~/.cache}/kwin-vfx`.
-Use the full `~/.local/bin/kwin-vfx-*` command paths if that directory is not
+Use the full `~/.local/bin/vfx-kwin-*` command paths if that directory is not
 already in your shell's PATH.
 
 **Log out and back in once after the first user installation.** Native KWin
@@ -112,7 +119,7 @@ silently install system dependencies; `makepkg -si` is the dependency-managed ro
 `--prefix` and `--build-dir` customize a source install. `--no-setup` installs files
 without changing desktop settings. `--stage DIR` installs into a test staging
 root and skips runtime downloads and live setup. Inspect configuration changes
-without applying them using `kwin-vfx-setup enable --user-plugin-path --dry-run`.
+without applying them using `vfx-kwin-setup enable --user-plugin-path --dry-run`.
 
 ## Automatic rebuilds for a user installation
 
@@ -121,8 +128,8 @@ and checkout, review it, then install it:
 
 ```sh
 python3 scripts/prepare-user-hook.py
-cat build-hook/kwin-vfx.hook
-sudo install -Dm644 build-hook/kwin-vfx.hook /etc/pacman.d/hooks/kwin-vfx.hook
+cat build-hook/vfx-kwin.hook
+sudo install -Dm644 build-hook/vfx-kwin.hook /etc/pacman.d/hooks/vfx-kwin.hook
 ```
 
 Use `--shader-only` for a shader build. `--prefix`, `--build-dir` and
@@ -152,15 +159,16 @@ without either VFX for KWin package installed. See the
 [hook format](https://man.archlinux.org/man/alpm-hooks.5.en) and
 [makepkg options](https://man.archlinux.org/man/makepkg.8.en).
 
-Remove `/etc/pacman.d/hooks/kwin-vfx.hook` to disable automatic rebuilding.
+Remove `/etc/pacman.d/hooks/vfx-kwin.hook` (or `kwin-vfx.hook` from an older
+setup) to disable automatic rebuilding.
 
 ## NVIDIA runtime and distribution
 
 ```sh
-kwin-vfx-runtime --download
-kwin-vfx-runtime /path/to/official-wheel.whl
-kwin-vfx-runtime --status
-kwin-vfx-setup enable
+vfx-kwin-runtime --download
+vfx-kwin-runtime /path/to/official-wheel.whl
+vfx-kwin-runtime --status
+vfx-kwin-setup enable
 ```
 
 The supported wheel is **nvidia-vfx 0.2.0.0**, SHA256
@@ -168,7 +176,7 @@ The supported wheel is **nvidia-vfx 0.2.0.0**, SHA256
 Before downloading or installing a local wheel, the helper displays a license
 notice and links, and asks for acceptance in a terminal (default **No**).
 For unattended installation, review the applicable NVIDIA terms and explicitly
-use `kwin-vfx-runtime --download --accept-license` or
+use `vfx-kwin-runtime --download --accept-license` or
 `scripts/install-user.sh --download-runtime --accept-license`.
 Without a terminal or that flag, the helper exits before downloading or
 installing the runtime. `--status` needs no acceptance and changes nothing.
@@ -179,7 +187,7 @@ Native libraries and their complete bundled license files are kept together.
 Runtime installation publishes a new version directory atomically and refuses
 to overwrite an incomplete/different/unverified directory or mutate libraries a worker
 might have mapped. A verified existing runtime is reused. `--output-dir` selects
-another runtime location; pass that directory to `kwin-vfx-setup enable --runtime-root`.
+another runtime location; pass that directory to `vfx-kwin-setup enable --runtime-root`.
 
 The wheel metadata marks it `LicenseRef-NvidiaProprietary`; its bundled May 2025
 software agreement, product-specific terms and third-party notices govern its
@@ -211,9 +219,9 @@ effect unloading. Pacman owns the packaged files for clean upgrades/removal.
 For a user build, rebuild/re-run the source installer and log in again; copying
 new files does not replace code already mapped by the running compositor.
 
-`kwin-vfx-setup disable` disables autoload, unloads the new effect, and removes its
+`vfx-kwin-setup disable` disables autoload, unloads the new effect, and removes its
 managed tray autostart entry. To remove a user installation completely after
-disabling it, remove only its `kwin-vfx-*` commands, `~/.local/lib/kwin-vfx`,
+disabling it, remove only its `vfx-kwin-*` commands, `~/.local/lib/kwin-vfx`,
 `~/.local/share/kwin-vfx/installation.json`, launcher/license entries, and the
 `60-kwin-vfx.conf` service drop-in; keep the runtime/preferences if you want to
 reuse them. A different `--prefix` changes those paths.

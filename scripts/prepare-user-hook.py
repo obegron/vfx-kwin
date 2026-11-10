@@ -29,7 +29,7 @@ def hook_text(root, user, prefix, build_dir, cmake_prefixes=(), shader_only=Fals
                     "/usr/bin/bash",str(Path(root)/"scripts/install-user.sh"),"--no-setup",
                     "--prefix",str(prefix),"--build-dir",str(build_dir)])
     if shader_only:command.append("--shader-only")
-    template=(Path(root)/"packaging/arch/kwin-vfx-user.hook.in").read_text()
+    template=(Path(root)/"packaging/arch/vfx-kwin-user.hook.in").read_text()
     return template.replace("@COMMAND@"," ".join(map(quote,command)))
 
 
@@ -48,7 +48,7 @@ def main():
     try:
         user=pwd.getpwuid(os.getuid())
         if user.pw_uid==0:raise ValueError("Generate the hook as your desktop user, without sudo")
-        packages=subprocess.run(["pacman","-Qq","kwin-vfx","kwin-vfx-nvidia"],capture_output=True,text=True)
+        packages=subprocess.run(["pacman","-Qq","vfx-kwin","vfx-kwin-nvidia","kwin-vfx","kwin-vfx-nvidia"],capture_output=True,text=True)
         if packages.stdout.strip():
             raise ValueError("A pacman-managed VFX for KWin package is installed. Migrate to a user installation first; "
                              "its exact KWin dependency would block upgrades before this hook runs.")
@@ -56,11 +56,11 @@ def main():
         text=hook_text(ROOT,user,prefix,build,[path.resolve() for path in args.cmake_prefix],args.shader_only,
                        args.cuda_root.resolve() if args.cuda_root else None)
         build.mkdir(parents=True,exist_ok=True);output.mkdir(parents=True,exist_ok=True)
-        hook=output/"kwin-vfx.hook";hook.write_text(text)
+        hook=output/"vfx-kwin.hook";hook.write_text(text)
         print(json.dumps({"hook":str(hook),"user":user.pw_name,"prefix":str(prefix),
                           "build_dir":str(build),"installed":False},indent=2))
         print("Review the generated hook, then install it with:")
-        print("sudo install -Dm644 "+quote(hook)+" /etc/pacman.d/hooks/kwin-vfx.hook")
+        print("sudo install -Dm644 "+quote(hook)+" /etc/pacman.d/hooks/vfx-kwin.hook")
     except (OSError,ValueError) as error:parser.exit(1,f"{error}\n")
 
 

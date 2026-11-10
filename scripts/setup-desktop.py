@@ -11,7 +11,13 @@ import subprocess
 
 VERSION = "0.2.0.0"
 GROUP = "Effect-kwin_vfx"
+# The marker and data directories keep their pre-rename spelling so existing
+# installations stay recognised; only user-facing command names changed.
 MARKER = "# Managed by kwin-vfx-setup"
+MANAGED = "X-KWin-VSR-Managed=true"
+TRAY = "vfx-kwin-tray"
+LEGACY_TRAY = "kwin-vfx-tray"
+LEGACY_COMMANDS = {"kwin-vfx-tray":"vfx-kwin-tray","kwin-vfx-setup":"vfx-kwin-setup","kwin-vfx-runtime":"vfx-kwin-runtime"}
 
 
 def config_home():
@@ -90,7 +96,7 @@ def desktop_entry(binary):
     quoted=str(binary).replace("\\","\\\\").replace('"','\\"').replace("`","\\`").replace("$","\\$")
     return "\n".join(["[Desktop Entry]","Type=Application","Name=VFX for KWin",
         "Comment=Choose windows to enhance from the system tray",f'Exec="{quoted}" --desktop',
-        "Icon=preferences-desktop-display","Terminal=false","StartupNotify=false","X-KWin-VSR-Managed=true",""])
+        "Icon=preferences-desktop-display","Terminal=false","StartupNotify=false",MANAGED,""])
 
 
 def connection():
@@ -101,6 +107,38 @@ def connection():
         return dbus.Interface(object,"org.kde.kwin.Effects"),dbus.Interface(object,"org.freedesktop.DBus.Properties")
     except ImportError as error:raise ValueError("Desktop setup requires python-dbus") from error
     except dbus.DBusException as error:raise ValueError(f"KWin's session bus is unavailable: {error}") from error
+
+
+def retire_legacy_autostart(home):
+    """Remove the managed autostart entry written under the pre-rename name."""
+    old=home/f"autostart/{LEGACY_TRAY}.desktop"
+    if old.is_file() and MANAGED in old.read_text():
+        old.unlink();return True
+    return False
+
+
+def migrate_user_installation(prefix, home=None):
+    """Move a user installation from kwin-vfx-* to vfx-kwin-* command names.
+
+    The installer runs this after the new files are in place, including from
+    the unattended pacman hook, which never re-runs setup: a managed autostart
+    entry must keep starting the tray once the old command is gone.
+    """
+    prefix=Path(prefix);home=home or config_home();bindir=prefix/"bin"
+    if retire_legacy_autostart(home):
+        new=home/f"autostart/{TRAY}.desktop"
+        if not new.exists():new.write_text(desktop_entry(bindir/TRAY))
+    launcher=prefix/f"share/applications/{LEGACY_TRAY}.desktop"
+    if launcher.is_file() and str(bindir/LEGACY_TRAY) in launcher.read_text():launcher.unlink()
+    licenses=prefix/"share/licenses/kwin-vfx"
+    if licenses.is_dir() and (prefix/"share/licenses/vfx-kwin").is_dir():shutil.rmtree(licenses)
+    removed=[]
+    for old,new in LEGACY_COMMANDS.items():
+        path=bindir/old
+        # Only drop a regular file we replaced; never a symlink or user script.
+        if path.is_file() and not path.is_symlink() and (bindir/new).is_file():
+            path.unlink();removed.append(path)
+    return removed
 
 
 def archive_legacy_entries(home, data):
@@ -134,9 +172,10 @@ def apply_enable(info,plan):
     if "service_override" in plan:
         service.parent.mkdir(parents=True,exist_ok=True);service.write_text(plan["service_override"])
     if plan["autostart"]:
-        autostart=home/"autostart/kwin-vfx-tray.desktop"
+        autostart=home/f"autostart/{TRAY}.desktop"
         autostart.parent.mkdir(parents=True,exist_ok=True)
-        autostart.write_text(desktop_entry(Path(info["bindir"])/"kwin-vfx-tray"))
+        autostart.write_text(desktop_entry(Path(info["bindir"])/TRAY))
+    retire_legacy_autostart(home)
     data=Path(os.environ.get("XDG_DATA_HOME",str(Path.home()/".local/share")))
     archived=archive_legacy_entries(home,data)
     if "service_override" in plan or archived:
@@ -154,12 +193,12 @@ def apply_enable(info,plan):
         elif "kwin_vfx" in loaded:
             print("Effect already loaded. Use a fresh login for a rebuilt plugin; the running compositor was not restarted.")
         elif effects.loadEffect("kwin_vfx"):
-            print("Window Enhancement loaded. Start kwin-vfx-tray --desktop and check the windows you want.")
+            print("Window Enhancement loaded. Start vfx-kwin-tray --desktop and check the windows you want.")
         else:
             write_setting("Plugins","kwin_vfxEnabled","false")
             raise ValueError("KWin declined the plugin. Rebuild for the installed KWin version and log in again.")
     if not plan["nvidia_enabled"]:
-        print("CAS/shader mode enabled. For AI: kwin-vfx-runtime --download, then kwin-vfx-setup enable.")
+        print("CAS/shader mode enabled. For AI: vfx-kwin-runtime --download, then vfx-kwin-setup enable.")
 
 
 def disable():
@@ -170,8 +209,9 @@ def disable():
     best-effort extra.
     """
     write_setting("Plugins","kwin_vfxEnabled","false")
-    autostart=config_home()/"autostart/kwin-vfx-tray.desktop"
-    if autostart.exists() and "X-KWin-VSR-Managed=true" in autostart.read_text():autostart.unlink()
+    autostart=config_home()/f"autostart/{TRAY}.desktop"
+    if autostart.exists() and MANAGED in autostart.read_text():autostart.unlink()
+    retire_legacy_autostart(config_home())
     try:
         effects,_=connection();effects.unloadEffect("kwin_vfx")
     except Exception as error:  # No session bus, KWin not running, or D-Bus failure.

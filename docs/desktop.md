@@ -1,7 +1,7 @@
 # Desktop controls
 
 Install using the [packaging guide](packaging.md), then open **VFX for KWin** from
-the application launcher or run `kwin-vfx-tray --desktop`.
+the application launcher or run `vfx-kwin-tray --desktop`.
 
 ## Selecting windows
 
@@ -73,7 +73,7 @@ Window selections are session-only. Preferences use `Effect-kwin_vfx` in
 To unload and disable future loading and the managed tray autostart entry:
 
 ```sh
-kwin-vfx-setup disable
+vfx-kwin-setup disable
 ```
 
 After binary upgrades, use a fresh login because Qt may retain the old plugin

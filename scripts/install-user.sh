@@ -40,11 +40,14 @@ if [[ "$nvidia" == OFF && ( -n "$wheel_file" || "$download_runtime" == 1 ) ]]; t
 fi
 install_prefix=$(realpath -m "$install_prefix")
 if [[ -z "$stage_dir" ]] && command -v pacman >/dev/null 2>&1; then
-    if pacman -Qq kwin-vfx-nvidia >/dev/null 2>&1 || pacman -Qq kwin-vfx >/dev/null 2>&1; then
-        printf 'A pacman-managed VFX for KWin package is installed. Choose either the package or user installation.\n' >&2
-        printf 'Remove that package before using the user installer; see docs/packaging.md. No files were changed.\n' >&2
-        exit 1
-    fi
+    # Current and pre-rename package names.
+    for package in vfx-kwin-nvidia vfx-kwin kwin-vfx-nvidia kwin-vfx; do
+        if pacman -Qq "$package" >/dev/null 2>&1; then
+            printf 'A pacman-managed VFX for KWin package (%s) is installed. Choose either the package or user installation.\n' "$package" >&2
+            printf 'Remove that package before using the user installer; see docs/packaging.md. No files were changed.\n' >&2
+            exit 1
+        fi
+    done
 fi
 cmake -S "$project_root" -B "$build_dir" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX="$install_prefix" \
@@ -63,11 +66,11 @@ if [[ -z "$runtime_root" && ( -n "$wheel_file" || "$download_runtime" == 1 ) ]];
 fi
 if [[ -n "$runtime_root" ]]; then runtime_args=(--output-dir "$runtime_root"); fi
 if [[ "$accept_license" == 1 ]]; then runtime_args+=(--accept-license); fi
-if [[ -n "$wheel_file" ]]; then "$install_prefix/bin/kwin-vfx-runtime" "$wheel_file" "${runtime_args[@]}"; fi
-if [[ "$download_runtime" == 1 ]]; then "$install_prefix/bin/kwin-vfx-runtime" --download "${runtime_args[@]}"; fi
+if [[ -n "$wheel_file" ]]; then "$install_prefix/bin/vfx-kwin-runtime" "$wheel_file" "${runtime_args[@]}"; fi
+if [[ "$download_runtime" == 1 ]]; then "$install_prefix/bin/vfx-kwin-runtime" --download "${runtime_args[@]}"; fi
 if [[ "$setup" == 1 ]]; then
     setup_args=(enable --user-plugin-path)
     if [[ -n "$runtime_root" ]]; then setup_args+=(--runtime-root "$runtime_root"); fi
-    "$install_prefix/bin/kwin-vfx-setup" "${setup_args[@]}"
+    "$install_prefix/bin/vfx-kwin-setup" "${setup_args[@]}"
 fi
 printf 'User installation complete. Use a fresh login to use rebuilt compositor code.\n'

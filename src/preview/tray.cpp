@@ -392,7 +392,7 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     app.setApplicationName("VFX for KWin Preview");
-    app.setDesktopFileName("kwin-vfx-tray");
+    app.setDesktopFileName("vfx-kwin-tray");
     app.setQuitOnLastWindowClosed(false);
     QCommandLineParser parser; parser.addHelpOption();
     parser.addOption({"preview-session", "Private preview session.json", "path"});

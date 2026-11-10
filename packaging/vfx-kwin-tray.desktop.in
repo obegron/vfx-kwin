@@ -2,7 +2,7 @@
 Type=Application
 Name=VFX for KWin
 Comment=Choose application windows to enhance from the system tray
-Exec="@CMAKE_INSTALL_FULL_BINDIR@/kwin-vfx-tray" --desktop
+Exec="@CMAKE_INSTALL_FULL_BINDIR@/vfx-kwin-tray" --desktop
 Icon=preferences-desktop-display
 Terminal=false
 StartupNotify=false

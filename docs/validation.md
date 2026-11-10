@@ -79,7 +79,7 @@ Screenshots must not be treated as an objective quality score.
 
 ## NVIDIA backend
 
-Install the supported runtime separately with `kwin-vfx-runtime --download`,
+Install the supported runtime separately with `vfx-kwin-runtime --download`,
 or use `python3 scripts/prepare-nvidia-runtime.py --download`. Then build:
 
 ```sh

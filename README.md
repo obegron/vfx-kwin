@@ -30,9 +30,9 @@ On Arch Linux, build and install the NVIDIA-enabled package from this checkout:
 
 ```sh
 scripts/build-arch.sh -si
-kwin-vfx-runtime --download
-kwin-vfx-setup enable
-kwin-vfx-tray --desktop
+vfx-kwin-runtime --download
+vfx-kwin-setup enable
+vfx-kwin-tray --desktop
 ```
 
 For shaders only, use `scripts/build-arch.sh --shader-only -si` and skip the
@@ -72,7 +72,7 @@ To turn it off when you cannot log in, switch to a text console
 (Ctrl+Alt+F3), log in, and run:
 
 ```sh
-kwin-vfx-setup disable
+vfx-kwin-setup disable
 # If the command is not on PATH, this is equivalent:
 kwriteconfig6 --file kwinrc --group Plugins --key kwin_vfxEnabled false
 ```

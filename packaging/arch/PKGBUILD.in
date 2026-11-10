@@ -1,5 +1,5 @@
 # VFX for KWin source package. Generated with scripts/prepare-arch-package.py.
-pkgname=kwin-vfx@PACKAGE_SUFFIX@
+pkgname=vfx-kwin@PACKAGE_SUFFIX@
 pkgver=0.0.1
 pkgrel=1
 pkgdesc='Per-window CAS, film grain and optional NVIDIA restoration for KWin Wayland'
@@ -11,12 +11,12 @@ depends=('glibc' 'gcc-libs' 'kwin>=6.8.1' 'kwin<6.9' 'qt6-base>=6.11.0' 'qt6-dec
          'libepoxy' 'python' 'python-dbus'@NVIDIA_DEPENDENCY@)
 makedepends=('cmake' 'ninja' 'extra-cmake-modules' 'vulkan-headers'@CUDA_DEPENDENCY@)
 @PACKAGE_RELATIONS@
-source=("kwin-vfx-${pkgver}.tar.gz")
+source=("vfx-kwin-${pkgver}.tar.gz")
 sha256sums=('@SOURCE_SHA256@')
 options=('!debug')
 
 build() {
-    cmake -S "kwin-vfx-${pkgver}" -B build -G Ninja \
+    cmake -S "vfx-kwin-${pkgver}" -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
         -DKDE_INSTALL_PLUGINDIR=lib/qt6/plugins \
         -DKWIN_VFX_BUILD_NVIDIA_BACKEND=@NVIDIA_OPTION@ \
@@ -29,7 +29,7 @@ check() {
     # Package builds need neither a running compositor nor GPU access.
     build/kwin_vfx_profile_reset_test
     build/kwin_vfx_frame_limits_test
-    python "kwin-vfx-${pkgver}/tests/packaging_test.py"
+    python "vfx-kwin-${pkgver}/tests/packaging_test.py"
 }
 
 package() {
@@ -46,6 +46,6 @@ package() {
     done
     depends=("${_runtime_depends[@]}" "kwin=${_kwin_version}")
     DESTDIR="${pkgdir}" cmake --install build
-    install -Dm644 "kwin-vfx-${pkgver}/docs/packaging.md" \
-        "${pkgdir}/usr/share/doc/kwin-vfx/packaging.md"
+    install -Dm644 "vfx-kwin-${pkgver}/docs/packaging.md" \
+        "${pkgdir}/usr/share/doc/vfx-kwin/packaging.md"
 }
