@@ -281,6 +281,19 @@ class DesktopSetupTests(unittest.TestCase):
             setup.apply_enable({}, {})
         write.assert_not_called();home.assert_not_called()
 
+    def test_disable_works_without_a_session_bus(self):
+        # TTY recovery after KWin crashes: no session bus, KWin not running.
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(setup,"config_home",return_value=Path(directory)), \
+             mock.patch.object(setup,"write_setting") as write, \
+             mock.patch.object(setup,"connection",side_effect=ValueError("KWin's session bus is unavailable")):
+            autostart=Path(directory)/"autostart/kwin-vfx-tray.desktop";autostart.parent.mkdir()
+            autostart.write_text("[Desktop Entry]\nX-KWin-VSR-Managed=true\n")
+            message=setup.disable()
+            write.assert_called_once_with("Plugins","kwin_vfxEnabled","false")
+            self.assertFalse(autostart.exists())
+            self.assertIn("next login",message)
+
     def test_legacy_preferences_migrate_and_existing_vfx_values_win(self):
         with tempfile.TemporaryDirectory() as directory,mock.patch.dict(os.environ,{"XDG_CONFIG_HOME":directory,"XDG_DATA_HOME":directory,"QT_PLUGIN_PATH":"/tmp/other-qt"}):
             root=Path(directory);native=root/"runtime";(native/"nvvfx/libs").mkdir(parents=True)

@@ -162,6 +162,23 @@ def apply_enable(info,plan):
         print("CAS/shader mode enabled. For AI: kwin-vfx-runtime --download, then kwin-vfx-setup enable.")
 
 
+def disable():
+    """Recovery path: must also work from a TTY with no session bus or KWin.
+
+    The persisted setting is what keeps the effect off at the next login, so it
+    and the autostart removal happen first; unloading from a running KWin is a
+    best-effort extra.
+    """
+    write_setting("Plugins","kwin_vfxEnabled","false")
+    autostart=config_home()/"autostart/kwin-vfx-tray.desktop"
+    if autostart.exists() and "X-KWin-VSR-Managed=true" in autostart.read_text():autostart.unlink()
+    try:
+        effects,_=connection();effects.unloadEffect("kwin_vfx")
+    except Exception as error:  # No session bus, KWin not running, or D-Bus failure.
+        return f"Window Enhancement disabled for the next login. KWin was not reachable to unload it now ({error})."
+    return "Window Enhancement disabled. KWin was not restarted."
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action",choices=("status","enable","disable"),nargs="?",default="status")
@@ -174,11 +191,7 @@ def main():
     try:
         if args.action=="disable":
             if args.dry_run:print("Would disable/unload the effect and remove its managed tray autostart.");return 0
-            write_setting("Plugins","kwin_vfxEnabled","false")
-            effects,_=connection();effects.unloadEffect("kwin_vfx")
-            autostart=config_home()/"autostart/kwin-vfx-tray.desktop"
-            if autostart.exists() and "X-KWin-VSR-Managed=true" in autostart.read_text():autostart.unlink()
-            print("Window Enhancement disabled. KWin was not restarted.");return 0
+            print(disable());return 0
         info=installation(args.installation)
         plan=enable_plan(info,args)
         if args.action=="status" or args.dry_run:

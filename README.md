@@ -61,6 +61,25 @@ Pause retains the selection; disabling all windows clears it.
 Film grain covers the entire selected window, including application UI.
 See [desktop controls](docs/desktop.md) for details.
 
+## If your session crashes
+
+The effect runs inside KWin, so a fault in it (or in the optional NVIDIA
+runtime) can end the whole Plasma session. KWin refuses to load a plugin built
+for a different KWin version, so after an update the effect is simply missing
+until it is rebuilt; it does not crash.
+
+To turn it off when you cannot log in, switch to a text console
+(Ctrl+Alt+F3), log in, and run:
+
+```sh
+kwin-vfx-setup disable
+# If the command is not on PATH, this is equivalent:
+kwriteconfig6 --file kwinrc --group Plugins --key kwin_vfxEnabled false
+```
+
+Then return to the login screen (Ctrl+Alt+F1 or F2) and log in. The effect
+stays off until you enable it again.
+
 ## Development
 
 Build and test inside a separate nested compositor before loading a changed
